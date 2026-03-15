@@ -1,6 +1,8 @@
+import os
 from pathlib import Path
 import sys
 
+os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 backend_dir_str = str(BACKEND_DIR)
