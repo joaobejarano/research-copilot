@@ -1,52 +1,69 @@
 # Research Copilot
 
-Minimal FastAPI backend slice for the investment research copilot.
+Research Copilot is currently in Stage 0, with a minimal local setup:
+- a FastAPI backend with a `/health` endpoint
+- a Next.js frontend with a simple landing page
+- a local Postgres service via Docker Compose
 
-## Run locally
+## Repository structure
 
+```text
+backend/   FastAPI application and backend tests
+frontend/  Next.js (TypeScript) application
+infra/     Local infrastructure (docker-compose)
+docs/      Project documentation and architecture decisions
+.agents/   Agent workflows and skills (kept separate from app code)
+```
+
+## Run the backend
+
+1. Install dependencies:
+```bash
+cd backend
+python -m pip install -r requirements-dev.txt
+```
+
+2. Start the API:
 ```bash
 uvicorn app.main:app --reload
 ```
 
-The service will be available at `http://127.0.0.1:8000`.
+3. Open:
+- `http://127.0.0.1:8000/health`
+- `http://127.0.0.1:8000/docs`
 
-Health check:
+## Run the frontend
 
 ```bash
-curl http://127.0.0.1:8000/health
+cd frontend
+npm install
+npm run dev
 ```
 
-## API docs
+Open `http://localhost:3000`.
 
-FastAPI serves interactive docs by default:
+## Start local infrastructure
 
-- `http://127.0.0.1:8000/docs`
-- `http://127.0.0.1:8000/redoc`
+Start Postgres:
+```bash
+docker compose -f infra/docker-compose.yml up -d
+```
+
+Stop Postgres:
+```bash
+docker compose -f infra/docker-compose.yml down
+```
 
 ## Run tests
 
+Backend tests:
 ```bash
+cd backend
 pytest -q
 ```
 
-## Configuration
-
-Settings are loaded from environment variables with prefix `RESEARCH_COPILOT_`.
-
-Examples:
-
-- `RESEARCH_COPILOT_APP_NAME`
-- `RESEARCH_COPILOT_ENVIRONMENT`
-- `RESEARCH_COPILOT_DEBUG`
-- `RESEARCH_COPILOT_LOG_LEVEL`
-- `RESEARCH_COPILOT_LOG_JSON`
-
-## Architecture readiness
-
-The current foundation keeps transport, config, schemas, and logging separate so the next slices can be introduced without cross-coupling:
-
-- ingestion
-- retrieval
-- generation
-- verification
-- evals
+Frontend build check:
+```bash
+cd frontend
+npm run build
+```
