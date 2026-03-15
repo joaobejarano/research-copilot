@@ -12,3 +12,5 @@ node_modules/
 .next/
 dist/
 coverage/
+storage/
+scratch/
