@@ -1,37 +1,69 @@
-# Stage 0 Architecture
+# Stage 1 Architecture: Document Ingestion
 
 ## Scope
 
-Stage 0 provides a minimal local development baseline. It includes:
-- a backend API service
-- a frontend web app
-- a local Postgres instance
+Stage 1 implements minimal document ingestion in the backend:
+- upload a file and persist metadata
+- store files on local disk
+- read metadata with list and by-id endpoints
 
-No authentication, upload flows, workers, or MCP integration are included at this stage.
+Out of scope in Stage 1:
+- document parsing
+- embeddings
+- background workers
+- filtering and pagination for document listing
+- frontend ingestion UI
 
 ## Components
 
-### Backend (`backend/`)
-- Framework: FastAPI
-- Current endpoint: `GET /health`
-- Purpose in Stage 0: verify API bootstrapping and test setup
+### API layer (`backend/app/api/routes/documents.py`)
+- `POST /documents/upload`
+- `GET /documents`
+- `GET /documents/{document_id}`
 
-### Frontend (`frontend/`)
-- Framework: Next.js with TypeScript
-- Current page: minimal landing page at `/`
-- Purpose in Stage 0: verify frontend bootstrapping and local run/build flow
+Routes are intentionally thin and operate directly with SQLAlchemy sessions.
 
-### Infrastructure (`infra/`)
-- Service: Postgres (`postgres:16-alpine`) in Docker Compose
-- Purpose in Stage 0: provide a local database container baseline
+### Persistence layer (`backend/app/db/models/document.py`)
+- Single `documents` table with fields:
+  - `id`
+  - `company_name`
+  - `document_type`
+  - `period`
+  - `source_filename`
+  - `storage_path`
+  - `status`
+  - `created_at`
 
-## Interactions in Stage 0
+### Storage
+- Uploaded files are written to local filesystem under `STORAGE_DIR`.
+- Stored path format:
+  - `<sanitized_company>/<sanitized_document_type>/<sanitized_period>/<id>.<ext>`
+- `storage_path` persisted in DB is relative to `STORAGE_DIR`.
 
-- Frontend does not call backend yet.
-- Backend does not use Postgres yet.
-- Postgres runs independently for local environment readiness.
+### Runtime dependencies
+- FastAPI for HTTP endpoints
+- SQLAlchemy for DB access
+- Postgres as default database target
 
-## Repository boundaries
+## Request flows
 
-- Application code lives in `backend/`, `frontend/`, and `infra/`.
-- Agent workflow assets live under `.agents/` and are intentionally separate from application code.
+### Upload flow (`POST /documents/upload`)
+1. Validate multipart request and file extension.
+2. Insert `documents` row with temporary `storage_path` and status `uploaded`.
+3. Write file to local storage path derived from metadata and generated document id.
+4. Update row with final relative `storage_path`.
+5. Commit transaction and return metadata response.
+
+### Read flow (`GET /documents`)
+1. Query `documents` ordered by ascending `id`.
+2. Return metadata list response.
+
+### Read flow (`GET /documents/{document_id}`)
+1. Lookup row by primary key.
+2. Return metadata when found.
+3. Return `404` when not found.
+
+## Data boundaries
+
+- Stage 1 responses are metadata-only.
+- No parsed content is returned by ingestion endpoints.
