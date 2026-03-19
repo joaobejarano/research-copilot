@@ -1,7 +1,9 @@
 import re
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -15,9 +17,36 @@ ALLOWED_EXTENSIONS = {".pdf", ".txt", ".doc", ".docx"}
 WRITE_CHUNK_SIZE = 1024 * 1024
 
 
+class DocumentMetadataResponse(BaseModel):
+    id: int
+    company_name: str
+    document_type: str
+    period: str
+    source_filename: str
+    storage_path: str
+    status: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 def _sanitize_path_component(value: str) -> str:
     sanitized = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip()).strip("._")
     return sanitized or "unknown"
+
+
+@router.get("", response_model=list[DocumentMetadataResponse])
+async def list_documents(db: Session = Depends(get_db)) -> list[Document]:
+    documents = db.query(Document).order_by(Document.id.asc()).all()
+    return documents
+
+
+@router.get("/{document_id}", response_model=DocumentMetadataResponse)
+async def get_document(document_id: int, db: Session = Depends(get_db)) -> Document:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return document
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
