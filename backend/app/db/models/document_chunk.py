@@ -17,6 +17,43 @@ class VectorType(UserDefinedType):
     def get_col_spec(self, **_: object) -> str:
         return f"VECTOR({self.dimensions})"
 
+    def bind_processor(self, _: object):
+        def process(value: list[float] | tuple[float, ...] | None) -> str | None:
+            if value is None:
+                return None
+
+            vector = [float(item) for item in value]
+            if len(vector) != self.dimensions:
+                raise ValueError(
+                    f"Embedding dimension mismatch: expected {self.dimensions}, got {len(vector)}."
+                )
+
+            vector_literal = ",".join(format(item, ".15g") for item in vector)
+            return f"[{vector_literal}]"
+
+        return process
+
+    def result_processor(self, _: object, __: object):
+        def process(
+            value: str | bytes | list[float] | tuple[float, ...] | None,
+        ) -> list[float] | None:
+            if value is None:
+                return None
+            if isinstance(value, list):
+                return [float(item) for item in value]
+            if isinstance(value, tuple):
+                return [float(item) for item in value]
+            if isinstance(value, bytes):
+                value = value.decode()
+
+            stripped = value.strip().strip("[]")
+            if not stripped:
+                return []
+
+            return [float(item.strip()) for item in stripped.split(",")]
+
+        return process
+
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
