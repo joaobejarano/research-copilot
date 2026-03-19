@@ -46,6 +46,49 @@ def _upload_document(
     return response.json()
 
 
+def test_document_ingestion_flow_upload_list_and_get_by_id() -> None:
+    uploaded_document = _upload_document(
+        company_name="Acme Corp",
+        document_type="financial_report",
+        period="2024-Q4",
+        filename="report.pdf",
+        content=b"sample report",
+        content_type="application/pdf",
+    )
+
+    async def request_documents() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/documents")
+
+    list_response = asyncio.run(request_documents())
+    assert list_response.status_code == 200
+
+    listed_documents = list_response.json()
+    assert len(listed_documents) == 1
+    assert set(listed_documents[0].keys()) == METADATA_KEYS
+    assert listed_documents[0]["id"] == uploaded_document["id"]
+
+    async def request_document(document_id: int) -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            return await client.get(f"/documents/{document_id}")
+
+    get_response = asyncio.run(request_document(uploaded_document["id"]))
+    assert get_response.status_code == 200
+
+    fetched_document = get_response.json()
+    assert set(fetched_document.keys()) == METADATA_KEYS
+    assert fetched_document["id"] == uploaded_document["id"]
+    assert fetched_document["source_filename"] == "report.pdf"
+
+
 def test_list_documents_returns_uploaded_metadata() -> None:
     first_document = _upload_document(
         company_name="Acme Corp",
