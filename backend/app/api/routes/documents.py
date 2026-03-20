@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config import STORAGE_DIR
 from app.db.database import get_db
 from app.db.models.document import Document
+from app.ingestion.processing import process_uploaded_document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -30,6 +31,12 @@ class DocumentMetadataResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DocumentProcessResponse(BaseModel):
+    document_id: int
+    status: str
+    chunk_count: int
+
+
 def _sanitize_path_component(value: str) -> str:
     sanitized = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip()).strip("._")
     return sanitized or "unknown"
@@ -47,6 +54,51 @@ async def get_document(document_id: int, db: Session = Depends(get_db)) -> Docum
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found.")
     return document
+
+
+@router.post("/{document_id}/process", response_model=DocumentProcessResponse)
+async def process_document(document_id: int, db: Session = Depends(get_db)) -> DocumentProcessResponse:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    document.status = "processing"
+    db.commit()
+    db.refresh(document)
+
+    try:
+        chunk_count = process_uploaded_document(db=db, document_id=document_id)
+    except Exception as exc:
+        db.rollback()
+
+        failed_document = db.get(Document, document_id)
+        if failed_document is not None:
+            failed_document.status = "failed"
+            try:
+                db.commit()
+            except SQLAlchemyError:
+                db.rollback()
+
+        detail = str(exc)
+        status_code = 400 if "Unsupported document extension" in detail else 500
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"Document processing failed: {detail}",
+        ) from exc
+
+    ready_document = db.get(Document, document_id)
+    if ready_document is None:
+        raise HTTPException(status_code=500, detail="Document was not found after processing.")
+
+    ready_document.status = "ready"
+    db.commit()
+    db.refresh(ready_document)
+
+    return DocumentProcessResponse(
+        document_id=ready_document.id,
+        status=ready_document.status,
+        chunk_count=chunk_count,
+    )
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)

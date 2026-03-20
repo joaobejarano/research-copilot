@@ -107,6 +107,41 @@ def test_process_uploaded_document_fails_on_dimension_mismatch() -> None:
         db.close()
 
 
+def test_process_uploaded_document_reprocessing_replaces_chunks_safely() -> None:
+    document_id, _ = _create_uploaded_txt_document("one two three four five six")
+    db = SessionLocal()
+
+    try:
+        first_persisted_count = process_uploaded_document(
+            db=db,
+            document_id=document_id,
+            embedding_provider=FakeEmbeddingProvider(EMBEDDING_DIMENSION),
+            chunk_size=3,
+            chunk_overlap=1,
+        )
+        second_persisted_count = process_uploaded_document(
+            db=db,
+            document_id=document_id,
+            embedding_provider=FakeEmbeddingProvider(EMBEDDING_DIMENSION),
+            chunk_size=3,
+            chunk_overlap=1,
+        )
+
+        stored_chunks = (
+            db.query(DocumentChunk)
+            .filter(DocumentChunk.document_id == document_id)
+            .order_by(DocumentChunk.chunk_index.asc())
+            .all()
+        )
+
+        assert first_persisted_count == 3
+        assert second_persisted_count == 3
+        assert len(stored_chunks) == 3
+        assert [chunk.chunk_index for chunk in stored_chunks] == [0, 1, 2]
+    finally:
+        db.close()
+
+
 def test_get_embedding_provider_rejects_unsupported_provider() -> None:
     with pytest.raises(ValueError, match="Unsupported embedding provider"):
         get_embedding_provider(provider_name="remote")
