@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from pypdf import PdfWriter
 
 from app.ingestion.parsing import ParsedPage, parse_document, parse_pdf_file, parse_txt_file
 
@@ -34,6 +35,22 @@ def test_parse_pdf_file_returns_pages_with_numbers(monkeypatch: pytest.MonkeyPat
         ParsedPage(text="page one", page_number=1),
         ParsedPage(text="", page_number=2),
     ]
+
+
+def test_parse_pdf_file_reads_real_pdf_pages(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.add_blank_page(width=72, height=72)
+    with file_path.open("wb") as output_file:
+        writer.write(output_file)
+
+    pages = parse_pdf_file(file_path)
+
+    assert len(pages) == 2
+    assert [page.page_number for page in pages] == [1, 2]
+    assert pages[0].text == ""
+    assert pages[1].text == ""
 
 
 def test_parse_document_dispatches_txt_parser(tmp_path: Path) -> None:
