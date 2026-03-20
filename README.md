@@ -1,29 +1,32 @@
 # Research Copilot
 
-Research Copilot is in Stage 1 with a minimal document ingestion backend.
+Research Copilot is in Stage 2 with synchronous document processing.
 
-Current Stage 1 implementation includes:
-- FastAPI endpoints to upload documents and persist metadata
-- local filesystem storage for uploaded files
-- metadata read endpoints (`GET /documents`, `GET /documents/{document_id}`)
-- backend tests for upload and metadata reads
+Current Stage 2 implementation includes:
+- document upload and metadata endpoints
+- synchronous processing endpoint (`POST /documents/{document_id}/process`)
+- parsing support for `.txt` and `.pdf`
+- deterministic chunking with configurable size and overlap
+- local embedding generation using `sentence-transformers`
+- chunk persistence in `document_chunks` with pgvector embeddings
+- chunk inspection endpoint (`GET /documents/{document_id}/chunks`)
 
-## Stage 1 ingestion flow
+## How Stage 2 processing works
 
-1. Client uploads a document using `POST /documents/upload` with:
-   - `company_name` (form field)
-   - `document_type` (form field)
-   - `period` (form field)
-   - `file` (multipart file)
-2. Backend validates file extension (`.pdf`, `.txt`, `.doc`, `.docx`).
-3. Backend creates a `documents` row with status `uploaded`.
-4. Backend stores the file under `STORAGE_DIR/<company>/<document_type>/<period>/<id>.<ext>`.
-5. Backend persists metadata including relative `storage_path`.
-6. Clients can read metadata using:
-   - `GET /documents`
-   - `GET /documents/{document_id}`
+1. Upload a document with `POST /documents/upload` (status starts as `uploaded`).
+2. Trigger processing with `POST /documents/{document_id}/process`.
+3. During processing:
+- status changes to `processing`
+- stored file is loaded from `STORAGE_DIR`
+- parser reads `.txt` or `.pdf`
+- chunker splits content using `CHUNK_SIZE` and `CHUNK_OVERLAP`
+- local embedding provider generates one vector per chunk
+- chunks are persisted in `document_chunks` (safe for reprocessing)
+4. On success, status changes to `ready`.
+5. On failure, status changes to `failed`.
+6. Inspect chunks with `GET /documents/{document_id}/chunks` (no raw embedding vector in response).
 
-The API returns metadata only. Parsed content is not part of Stage 1.
+Note: the first embedding run may download the configured sentence-transformers model.
 
 ## Repository structure
 
@@ -37,12 +40,22 @@ docs/      Project documentation and architecture decisions
 
 ## Required environment variables
 
-Stage 1 ingestion needs a database connection and a storage directory:
+Stage 2 requires:
 
 - `DATABASE_URL`
   - Example: `postgresql+psycopg://research_copilot:research_copilot@localhost:5432/research_copilot`
 - `STORAGE_DIR`
   - Example: `storage/documents` (relative to repository root) or an absolute path
+- `CHUNK_SIZE`
+  - Example: `800`
+- `CHUNK_OVERLAP`
+  - Example: `120`
+- `EMBEDDING_PROVIDER`
+  - Stage 2 value: `local`
+- `EMBEDDING_MODEL`
+  - Example: `sentence-transformers/all-MiniLM-L6-v2`
+- `EMBEDDING_DIMENSION`
+  - Example: `384`
 
 If `DATABASE_URL` is not set, backend builds one from:
 - `POSTGRES_HOST`
@@ -51,7 +64,7 @@ If `DATABASE_URL` is not set, backend builds one from:
 - `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
 
-## Run backend locally
+## Run backend locally (Stage 2)
 
 1. Install dependencies:
 ```bash
@@ -77,26 +90,35 @@ uvicorn app.main:app --reload
 
 API docs: `http://127.0.0.1:8000/docs`
 
-## Upload a file with curl
+## Upload a document
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/documents/upload" \
   -F "company_name=Acme Corp" \
   -F "document_type=financial_report" \
   -F "period=2024-Q4" \
-  -F "file=@./report.pdf;type=application/pdf"
+  -F "file=@./report.txt;type=text/plain"
 ```
 
-## List documents
+## Process a document
 
 ```bash
-curl "http://127.0.0.1:8000/documents"
+curl -X POST "http://127.0.0.1:8000/documents/1/process"
 ```
 
-## Fetch a document by id
+Example successful response:
+```json
+{
+  "document_id": 1,
+  "status": "ready",
+  "chunk_count": 3
+}
+```
+
+## Inspect chunks
 
 ```bash
-curl "http://127.0.0.1:8000/documents/1"
+curl "http://127.0.0.1:8000/documents/1/chunks"
 ```
 
 ## Run tests
@@ -104,4 +126,16 @@ curl "http://127.0.0.1:8000/documents/1"
 ```bash
 cd backend
 pytest -q
+```
+
+Stage 2-focused tests:
+```bash
+cd backend
+pytest -q \
+  tests/test_parsing.py \
+  tests/test_chunking.py \
+  tests/test_embeddings.py \
+  tests/test_processing.py \
+  tests/test_documents_process.py \
+  tests/test_documents_chunks.py
 ```

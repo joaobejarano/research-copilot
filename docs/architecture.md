@@ -1,69 +1,72 @@
-# Stage 1 Architecture: Document Ingestion
+# Stage 2 Architecture Additions
 
-## Scope
+This document describes only what Stage 2 adds on top of Stage 1 ingestion.
 
-Stage 1 implements minimal document ingestion in the backend:
-- upload a file and persist metadata
-- store files on local disk
-- read metadata with list and by-id endpoints
+## Scope Added in Stage 2
 
-Out of scope in Stage 1:
-- document parsing
-- embeddings
+- synchronous document processing endpoint
+- parsing for `.txt` and `.pdf`
+- deterministic chunking with overlap
+- local embedding generation
+- chunk persistence in pgvector-backed `document_chunks`
+- chunk inspection endpoint
+
+Still out of scope in Stage 2:
+- retrieval and semantic search
+- Q&A workflows
 - background workers
-- filtering and pagination for document listing
-- frontend ingestion UI
 
-## Components
+## Components Added
 
-### API layer (`backend/app/api/routes/documents.py`)
-- `POST /documents/upload`
-- `GET /documents`
-- `GET /documents/{document_id}`
+### API additions (`backend/app/api/routes/documents.py`)
 
-Routes are intentionally thin and operate directly with SQLAlchemy sessions.
+- `POST /documents/{document_id}/process`
+  - synchronous processing entrypoint
+  - status flow: `uploaded -> processing -> ready` or `uploaded -> processing -> failed`
+- `GET /documents/{document_id}/chunks`
+  - returns chunk inspection payload ordered by `chunk_index`
+  - excludes raw embedding vectors from response
+  - includes `embedding_dimension` metadata
 
-### Persistence layer (`backend/app/db/models/document.py`)
-- Single `documents` table with fields:
-  - `id`
-  - `company_name`
-  - `document_type`
-  - `period`
-  - `source_filename`
-  - `storage_path`
-  - `status`
-  - `created_at`
+### Ingestion modules (`backend/app/ingestion/`)
 
-### Storage
-- Uploaded files are written to local filesystem under `STORAGE_DIR`.
-- Stored path format:
-  - `<sanitized_company>/<sanitized_document_type>/<sanitized_period>/<id>.<ext>`
-- `storage_path` persisted in DB is relative to `STORAGE_DIR`.
+- `parsing.py`
+  - `parse_txt_file` and `parse_pdf_file`
+  - `parse_document` dispatch by file extension
+- `chunking.py`
+  - deterministic token-based chunking with `CHUNK_SIZE` and `CHUNK_OVERLAP`
+  - per-chunk `token_count` approximation
+- `embeddings.py`
+  - replaceable embedding provider protocol
+  - Stage 2 local provider using `sentence-transformers`
+  - strict embedding dimension validation
+- `processing.py`
+  - orchestrates parse -> chunk -> embed -> persist
+  - supports safe reprocessing by replacing existing chunks for a document
 
-### Runtime dependencies
-- FastAPI for HTTP endpoints
-- SQLAlchemy for DB access
-- Postgres as default database target
+### Database additions
 
-## Request flows
+- `document_chunks` table (`backend/app/db/models/document_chunk.py`) with:
+  - `document_id`, `chunk_index`, `page_number`, `text`, `token_count`, `embedding`, `created_at`
+- `embedding` column stored as pgvector (`VECTOR(EMBEDDING_DIMENSION)`)
+- startup ensures `vector` extension exists before table creation
 
-### Upload flow (`POST /documents/upload`)
-1. Validate multipart request and file extension.
-2. Insert `documents` row with temporary `storage_path` and status `uploaded`.
-3. Write file to local storage path derived from metadata and generated document id.
-4. Update row with final relative `storage_path`.
-5. Commit transaction and return metadata response.
+### Infrastructure additions
 
-### Read flow (`GET /documents`)
-1. Query `documents` ordered by ascending `id`.
-2. Return metadata list response.
+- local Postgres image updated to `pgvector/pgvector:pg16` (`infra/docker-compose.yml`)
 
-### Read flow (`GET /documents/{document_id}`)
-1. Lookup row by primary key.
-2. Return metadata when found.
-3. Return `404` when not found.
+## Stage 2 Processing Flow
 
-## Data boundaries
+1. Client uploads document in Stage 1 flow (`status=uploaded`).
+2. Client calls `POST /documents/{document_id}/process`.
+3. API sets status to `processing`.
+4. Processing pipeline loads file from local storage and parses `.txt` or `.pdf`.
+5. Chunker creates deterministic chunks using configured size and overlap.
+6. Local embedder generates one vector per chunk and validates dimension.
+7. Existing chunks for that document are deleted and replaced with new persisted chunks.
+8. API sets status to `ready` on success, or `failed` on exception.
 
-- Stage 1 responses are metadata-only.
-- No parsed content is returned by ingestion endpoints.
+## Data Boundaries in Stage 2
+
+- Chunk inspection returns text and metadata for debugging and validation.
+- Raw embedding vectors remain persisted in DB and are not returned by default.
