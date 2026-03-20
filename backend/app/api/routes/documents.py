@@ -7,9 +7,10 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.config import STORAGE_DIR
+from app.core.config import EMBEDDING_DIMENSION, STORAGE_DIR
 from app.db.database import get_db
 from app.db.models.document import Document
+from app.db.models.document_chunk import DocumentChunk
 from app.ingestion.processing import process_uploaded_document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -35,6 +36,21 @@ class DocumentProcessResponse(BaseModel):
     document_id: int
     status: str
     chunk_count: int
+
+
+class DocumentChunkSummaryResponse(BaseModel):
+    chunk_index: int
+    page_number: int | None
+    text: str
+    token_count: int
+
+
+class DocumentChunksResponse(BaseModel):
+    document_id: int
+    status: str
+    chunk_count: int
+    embedding_dimension: int
+    chunks: list[DocumentChunkSummaryResponse]
 
 
 def _sanitize_path_component(value: str) -> str:
@@ -98,6 +114,38 @@ async def process_document(document_id: int, db: Session = Depends(get_db)) -> D
         document_id=ready_document.id,
         status=ready_document.status,
         chunk_count=chunk_count,
+    )
+
+
+@router.get("/{document_id}/chunks", response_model=DocumentChunksResponse)
+async def get_document_chunks(
+    document_id: int, db: Session = Depends(get_db)
+) -> DocumentChunksResponse:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    chunks = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index.asc())
+        .all()
+    )
+
+    return DocumentChunksResponse(
+        document_id=document.id,
+        status=document.status,
+        chunk_count=len(chunks),
+        embedding_dimension=EMBEDDING_DIMENSION,
+        chunks=[
+            DocumentChunkSummaryResponse(
+                chunk_index=chunk.chunk_index,
+                page_number=chunk.page_number,
+                text=chunk.text,
+                token_count=chunk.token_count,
+            )
+            for chunk in chunks
+        ],
     )
 
 
