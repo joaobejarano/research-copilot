@@ -7,11 +7,17 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.config import EMBEDDING_DIMENSION, STORAGE_DIR
+from app.core.config import (
+    EMBEDDING_DIMENSION,
+    RETRIEVAL_MIN_SIMILARITY,
+    RETRIEVAL_TOP_K,
+    STORAGE_DIR,
+)
 from app.db.database import get_db
 from app.db.models.document import Document
 from app.db.models.document_chunk import DocumentChunk
 from app.ingestion.processing import process_uploaded_document
+from app.retrieval.service import retrieve_relevant_chunks
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -51,6 +57,29 @@ class DocumentChunksResponse(BaseModel):
     chunk_count: int
     embedding_dimension: int
     chunks: list[DocumentChunkSummaryResponse]
+
+
+class DocumentRetrievalRequest(BaseModel):
+    question: str
+    top_k: int | None = None
+    min_similarity: float | None = None
+
+
+class DocumentRetrievedChunkResponse(BaseModel):
+    chunk_index: int
+    page_number: int | None
+    text: str
+    token_count: int
+    similarity: float
+
+
+class DocumentRetrievalResponse(BaseModel):
+    document_id: int
+    question: str
+    top_k: int
+    min_similarity: float
+    result_count: int
+    chunks: list[DocumentRetrievedChunkResponse]
 
 
 def _sanitize_path_component(value: str) -> str:
@@ -145,6 +174,51 @@ async def get_document_chunks(
                 token_count=chunk.token_count,
             )
             for chunk in chunks
+        ],
+    )
+
+
+@router.post("/{document_id}/retrieve", response_model=DocumentRetrievalResponse)
+async def retrieve_document_chunks(
+    document_id: int,
+    payload: DocumentRetrievalRequest,
+    db: Session = Depends(get_db),
+) -> DocumentRetrievalResponse:
+    top_k = payload.top_k if payload.top_k is not None else RETRIEVAL_TOP_K
+    min_similarity = (
+        payload.min_similarity
+        if payload.min_similarity is not None
+        else RETRIEVAL_MIN_SIMILARITY
+    )
+
+    try:
+        retrieved_chunks = retrieve_relevant_chunks(
+            db=db,
+            document_id=document_id,
+            question=payload.question,
+            top_k=top_k,
+            min_similarity=min_similarity,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail.endswith("was not found.") else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    return DocumentRetrievalResponse(
+        document_id=document_id,
+        question=payload.question,
+        top_k=top_k,
+        min_similarity=min_similarity,
+        result_count=len(retrieved_chunks),
+        chunks=[
+            DocumentRetrievedChunkResponse(
+                chunk_index=chunk.chunk_index,
+                page_number=chunk.page_number,
+                text=chunk.text,
+                token_count=chunk.token_count,
+                similarity=chunk.similarity,
+            )
+            for chunk in retrieved_chunks
         ],
     )
 
