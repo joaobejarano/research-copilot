@@ -1,46 +1,39 @@
 # Research Copilot
 
-Research Copilot is in Stage 2 with synchronous document processing.
+Research Copilot is in Stage 3 with document-scoped semantic retrieval and grounded Q&A.
 
-Current Stage 2 implementation includes:
+Current Stage 3 implementation includes:
 - document upload and metadata endpoints
 - synchronous processing endpoint (`POST /documents/{document_id}/process`)
 - parsing support for `.txt` and `.pdf`
 - deterministic chunking with configurable size and overlap
 - local embedding generation using `sentence-transformers`
-- chunk persistence in `document_chunks` with pgvector embeddings
+- chunk persistence in `document_chunks` with pgvector-compatible embeddings
 - chunk inspection endpoint (`GET /documents/{document_id}/chunks`)
+- semantic retrieval endpoint (`POST /documents/{document_id}/retrieve`)
+- grounded Q&A endpoint (`POST /documents/{document_id}/ask`) with citations
 
-## How Stage 2 processing works
+## How Stage 3 retrieval works
 
-1. Upload a document with `POST /documents/upload` (status starts as `uploaded`).
-2. Trigger processing with `POST /documents/{document_id}/process`.
-3. During processing:
-- status changes to `processing`
-- stored file is loaded from `STORAGE_DIR`
-- parser reads `.txt` or `.pdf`
-- chunker splits content using `CHUNK_SIZE` and `CHUNK_OVERLAP`
-- local embedding provider generates one vector per chunk
-- chunks are persisted in `document_chunks` (safe for reprocessing)
-4. On success, status changes to `ready`.
-5. On failure, status changes to `failed`.
-6. Inspect chunks with `GET /documents/{document_id}/chunks` (no raw embedding vector in response).
+1. The client sends a question to `POST /documents/{document_id}/retrieve`.
+2. The backend generates an embedding for the question.
+3. Retrieval is scoped to the requested `document_id` only.
+4. Chunks are ranked by vector similarity and filtered by `min_similarity`.
+5. Up to `top_k` chunks are returned with:
+- `chunk_index`
+- `page_number`
+- `text`
+- `token_count`
+- `similarity`
 
-Note: the first embedding run may download the configured sentence-transformers model.
-
-## Repository structure
-
-```text
-backend/   FastAPI application and backend tests
-frontend/  Next.js (TypeScript) application
-infra/     Local infrastructure (docker-compose)
-docs/      Project documentation and architecture decisions
-.agents/   Agent workflows and skills (kept separate from app code)
-```
+Notes:
+- Chunks without embeddings are skipped.
+- In PostgreSQL, ranking uses pgvector distance.
+- In non-PostgreSQL test/local fallback paths, ranking uses cosine similarity in Python.
 
 ## Required environment variables
 
-Stage 2 requires:
+Stage 3 requires:
 
 - `DATABASE_URL`
   - Example: `postgresql+psycopg://research_copilot:research_copilot@localhost:5432/research_copilot`
@@ -51,11 +44,15 @@ Stage 2 requires:
 - `CHUNK_OVERLAP`
   - Example: `120`
 - `EMBEDDING_PROVIDER`
-  - Stage 2 value: `local`
+  - Stage 3 value: `local`
 - `EMBEDDING_MODEL`
   - Example: `sentence-transformers/all-MiniLM-L6-v2`
 - `EMBEDDING_DIMENSION`
   - Example: `384`
+- `RETRIEVAL_TOP_K`
+  - Default: `5`
+- `RETRIEVAL_MIN_SIMILARITY`
+  - Default: `0.2`
 
 If `DATABASE_URL` is not set, backend builds one from:
 - `POSTGRES_HOST`
@@ -64,7 +61,7 @@ If `DATABASE_URL` is not set, backend builds one from:
 - `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
 
-## Run backend locally (Stage 2)
+## Run backend locally
 
 1. Install dependencies:
 ```bash
@@ -90,8 +87,9 @@ uvicorn app.main:app --reload
 
 API docs: `http://127.0.0.1:8000/docs`
 
-## Upload a document
+## Upload and process a document
 
+1. Upload:
 ```bash
 curl -X POST "http://127.0.0.1:8000/documents/upload" \
   -F "company_name=Acme Corp" \
@@ -100,13 +98,12 @@ curl -X POST "http://127.0.0.1:8000/documents/upload" \
   -F "file=@./report.txt;type=text/plain"
 ```
 
-## Process a document
-
+2. Process:
 ```bash
 curl -X POST "http://127.0.0.1:8000/documents/1/process"
 ```
 
-Example successful response:
+Example response:
 ```json
 {
   "document_id": 1,
@@ -115,27 +112,64 @@ Example successful response:
 }
 ```
 
-## Inspect chunks
+## Ask a grounded question
 
+Request:
 ```bash
-curl "http://127.0.0.1:8000/documents/1/chunks"
+curl -X POST "http://127.0.0.1:8000/documents/1/ask" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What happened to revenue in Q4?",
+    "top_k": 5,
+    "min_similarity": 0.2
+  }'
 ```
+
+Example successful grounded response:
+```json
+{
+  "question": "What happened to revenue in Q4?",
+  "answer": "Revenue increased 12 percent in Q4. [C1]",
+  "status": "answered",
+  "citations": [
+    {
+      "citation_id": "C1",
+      "rank": 1,
+      "document_id": 1,
+      "chunk_index": 0,
+      "page_number": 1,
+      "text_excerpt": "Revenue increased 12 percent in Q4 ...",
+      "retrieval_score": 0.92
+    }
+  ]
+}
+```
+
+## What `insufficient_evidence` means
+
+`status: "insufficient_evidence"` means the system could not produce a grounded answer from retrieved context.
+
+This happens when:
+- no chunks pass retrieval threshold (`citations` is empty), or
+- chunks are retrieved but no sentence has enough lexical support for the question (`citations` contains top retrieved evidence snippets).
+
+In both cases, the API returns:
+- `answer`: `"Insufficient evidence to answer the question from retrieved context."`
+- `status`: `"insufficient_evidence"`
 
 ## Run tests
 
+All backend tests:
 ```bash
 cd backend
 pytest -q
 ```
 
-Stage 2-focused tests:
+Stage 3 retrieval and grounded Q&A tests:
 ```bash
 cd backend
 pytest -q \
-  tests/test_parsing.py \
-  tests/test_chunking.py \
-  tests/test_embeddings.py \
-  tests/test_processing.py \
-  tests/test_documents_process.py \
-  tests/test_documents_chunks.py
+  tests/test_retrieval_service.py \
+  tests/test_documents_retrieve.py \
+  tests/test_documents_ask.py
 ```

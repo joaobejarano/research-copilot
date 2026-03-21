@@ -1,72 +1,73 @@
-# Stage 2 Architecture Additions
+# Stage 3 Architecture Additions
 
-This document describes only what Stage 2 adds on top of Stage 1 ingestion.
+This document describes only what Stage 3 adds on top of Stage 2 processing and embeddings.
 
-## Scope Added in Stage 2
+## Scope Added in Stage 3
 
-- synchronous document processing endpoint
-- parsing for `.txt` and `.pdf`
-- deterministic chunking with overlap
-- local embedding generation
-- chunk persistence in pgvector-backed `document_chunks`
-- chunk inspection endpoint
+- document-scoped semantic retrieval API
+- grounded Q&A API with structured citations
+- insufficient-evidence response path to prevent unsupported answers
 
-Still out of scope in Stage 2:
-- retrieval and semantic search
-- Q&A workflows
-- background workers
+Still out of scope in Stage 3:
+- cross-document retrieval
+- advanced re-ranking pipelines
+- memo generation workflows
+- agent orchestration
 
-## Components Added
+## API Additions (`backend/app/api/routes/documents.py`)
 
-### API additions (`backend/app/api/routes/documents.py`)
+- `POST /documents/{document_id}/retrieve`
+  - request: `question`, optional `top_k`, optional `min_similarity`
+  - response: ranked chunk list with `similarity`
+  - behavior: retrieval is restricted to the specified document
+- `POST /documents/{document_id}/ask`
+  - request: `question`, optional `top_k`, optional `min_similarity`
+  - response: `question`, `answer`, `status`, `citations`
+  - status values:
+    - `answered`
+    - `insufficient_evidence`
 
-- `POST /documents/{document_id}/process`
-  - synchronous processing entrypoint
-  - status flow: `uploaded -> processing -> ready` or `uploaded -> processing -> failed`
-- `GET /documents/{document_id}/chunks`
-  - returns chunk inspection payload ordered by `chunk_index`
-  - excludes raw embedding vectors from response
-  - includes `embedding_dimension` metadata
+## Retrieval Component (`backend/app/retrieval/service.py`)
 
-### Ingestion modules (`backend/app/ingestion/`)
+- Generates a single query embedding from the incoming question.
+- Validates retrieval parameters:
+  - `top_k > 0`
+  - `-1 <= min_similarity <= 1`
+- Uses pgvector ranking in PostgreSQL (`embedding <=> query` distance).
+- Uses deterministic Python cosine fallback for non-PostgreSQL environments.
+- Filters out chunks with null embeddings.
+- Returns ranked `RetrievedChunk` records with:
+  - `chunk_index`
+  - `page_number`
+  - `text`
+  - `token_count`
+  - `similarity`
 
-- `parsing.py`
-  - `parse_txt_file` and `parse_pdf_file`
-  - `parse_document` dispatch by file extension
-- `chunking.py`
-  - deterministic token-based chunking with `CHUNK_SIZE` and `CHUNK_OVERLAP`
-  - per-chunk `token_count` approximation
-- `embeddings.py`
-  - replaceable embedding provider protocol
-  - Stage 2 local provider using `sentence-transformers`
-  - strict embedding dimension validation
-- `processing.py`
-  - orchestrates parse -> chunk -> embed -> persist
-  - supports safe reprocessing by replacing existing chunks for a document
+## Grounded Q&A Component (`backend/app/qa/service.py`)
 
-### Database additions
+- Calls retrieval first using the same `top_k` and `min_similarity`.
+- Selects answer sentences only from retrieved chunk text.
+- Requires lexical overlap between question keywords and candidate sentences.
+- Builds citations as structured evidence payload:
+  - `citation_id`, `rank`, `document_id`, `chunk_index`, `page_number`, `text_excerpt`, `retrieval_score`
+- Appends inline citation references (`[C1]`, `[C2]`) to grounded answers.
 
-- `document_chunks` table (`backend/app/db/models/document_chunk.py`) with:
-  - `document_id`, `chunk_index`, `page_number`, `text`, `token_count`, `embedding`, `created_at`
-- `embedding` column stored as pgvector (`VECTOR(EMBEDDING_DIMENSION)`)
-- startup ensures `vector` extension exists before table creation
+## Insufficient-Evidence Path
 
-### Infrastructure additions
+- If retrieval returns no chunks:
+  - `status = insufficient_evidence`
+  - `citations = []`
+- If retrieval returns chunks but none can ground an answer sentence:
+  - `status = insufficient_evidence`
+  - returns up to three top retrieved chunks as citations
+- In both cases, answer text is:
+  - `Insufficient evidence to answer the question from retrieved context.`
 
-- local Postgres image updated to `pgvector/pgvector:pg16` (`infra/docker-compose.yml`)
+## Stage 3 Runtime Flow
 
-## Stage 2 Processing Flow
-
-1. Client uploads document in Stage 1 flow (`status=uploaded`).
-2. Client calls `POST /documents/{document_id}/process`.
-3. API sets status to `processing`.
-4. Processing pipeline loads file from local storage and parses `.txt` or `.pdf`.
-5. Chunker creates deterministic chunks using configured size and overlap.
-6. Local embedder generates one vector per chunk and validates dimension.
-7. Existing chunks for that document are deleted and replaced with new persisted chunks.
-8. API sets status to `ready` on success, or `failed` on exception.
-
-## Data Boundaries in Stage 2
-
-- Chunk inspection returns text and metadata for debugging and validation.
-- Raw embedding vectors remain persisted in DB and are not returned by default.
+1. Client uploads and processes a document (Stage 1-2 flow).
+2. Client asks retrieval or Q&A against one document id.
+3. System embeds the question and ranks persisted chunks for that document.
+4. For Q&A, system either:
+- returns grounded sentences with citations (`answered`), or
+- returns `insufficient_evidence` with explicit evidence handling.
