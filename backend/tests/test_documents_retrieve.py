@@ -26,7 +26,7 @@ def _make_embedding(first: float, second: float) -> list[float]:
     return vector
 
 
-def _seed_document_with_chunks() -> tuple[int, int]:
+def _seed_document_with_chunks(*, include_unembedded_chunk: bool = False) -> tuple[int, int]:
     db = SessionLocal()
     try:
         document = Document(
@@ -50,42 +50,53 @@ def _seed_document_with_chunks() -> tuple[int, int]:
         db.refresh(document)
         db.refresh(other_document)
 
-        db.add_all(
-            [
+        chunks = [
+            DocumentChunk(
+                document_id=document.id,
+                chunk_index=0,
+                page_number=1,
+                text="alpha",
+                token_count=1,
+                embedding=_make_embedding(1.0, 0.0),
+            ),
+            DocumentChunk(
+                document_id=document.id,
+                chunk_index=1,
+                page_number=1,
+                text="alpha beta",
+                token_count=2,
+                embedding=_make_embedding(0.8, 0.2),
+            ),
+            DocumentChunk(
+                document_id=document.id,
+                chunk_index=2,
+                page_number=2,
+                text="beta",
+                token_count=1,
+                embedding=_make_embedding(0.0, 1.0),
+            ),
+            DocumentChunk(
+                document_id=other_document.id,
+                chunk_index=0,
+                page_number=1,
+                text="other doc",
+                token_count=2,
+                embedding=_make_embedding(1.0, 0.0),
+            ),
+        ]
+        if include_unembedded_chunk:
+            chunks.append(
                 DocumentChunk(
                     document_id=document.id,
-                    chunk_index=0,
-                    page_number=1,
-                    text="alpha",
-                    token_count=1,
-                    embedding=_make_embedding(1.0, 0.0),
-                ),
-                DocumentChunk(
-                    document_id=document.id,
-                    chunk_index=1,
-                    page_number=1,
-                    text="alpha beta",
-                    token_count=2,
-                    embedding=_make_embedding(0.8, 0.2),
-                ),
-                DocumentChunk(
-                    document_id=document.id,
-                    chunk_index=2,
-                    page_number=2,
-                    text="beta",
-                    token_count=1,
-                    embedding=_make_embedding(0.0, 1.0),
-                ),
-                DocumentChunk(
-                    document_id=other_document.id,
-                    chunk_index=0,
-                    page_number=1,
-                    text="other doc",
-                    token_count=2,
-                    embedding=_make_embedding(1.0, 0.0),
-                ),
-            ]
-        )
+                    chunk_index=3,
+                    page_number=3,
+                    text="chunk without embedding",
+                    token_count=3,
+                    embedding=None,
+                )
+            )
+
+        db.add_all(chunks)
         db.commit()
 
         return document.id, other_document.id
@@ -136,7 +147,43 @@ def test_retrieve_endpoint_returns_ranked_chunks(
     assert payload["min_similarity"] == 0.5
     assert payload["result_count"] == 2
     assert [chunk["chunk_index"] for chunk in payload["chunks"]] == [0, 1]
+    assert payload["chunks"][0]["text"] == "alpha"
+    assert payload["chunks"][0]["token_count"] == 1
+    assert payload["chunks"][0]["page_number"] == 1
+    assert payload["chunks"][1]["text"] == "alpha beta"
+    assert payload["chunks"][1]["token_count"] == 2
+    assert payload["chunks"][1]["page_number"] == 1
+    assert all(
+        set(chunk.keys()) == {"chunk_index", "page_number", "text", "token_count", "similarity"}
+        for chunk in payload["chunks"]
+    )
     assert payload["chunks"][0]["similarity"] >= payload["chunks"][1]["similarity"]
+    assert all(isinstance(chunk["similarity"], float) for chunk in payload["chunks"])
+
+
+def test_retrieve_endpoint_ignores_chunks_without_embedding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document_id, _ = _seed_document_with_chunks(include_unembedded_chunk=True)
+    monkeypatch.setattr(
+        retrieval_service,
+        "get_embedding_provider",
+        lambda: FakeEmbeddingProvider(_make_embedding(1.0, 0.0)),
+    )
+
+    response = _retrieve(
+        document_id,
+        {
+            "question": "alpha performance",
+            "top_k": 5,
+            "min_similarity": 0.0,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["result_count"] == 3
+    assert [chunk["chunk_index"] for chunk in payload["chunks"]] == [0, 1, 2]
 
 
 def test_retrieve_endpoint_returns_404_for_missing_document() -> None:
