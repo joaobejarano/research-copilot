@@ -17,6 +17,7 @@ from app.db.database import get_db
 from app.db.models.document import Document
 from app.db.models.document_chunk import DocumentChunk
 from app.ingestion.processing import process_uploaded_document
+from app.qa.service import answer_document_question
 from app.retrieval.service import retrieve_relevant_chunks
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -80,6 +81,27 @@ class DocumentRetrievalResponse(BaseModel):
     min_similarity: float
     result_count: int
     chunks: list[DocumentRetrievedChunkResponse]
+
+
+class DocumentAskRequest(BaseModel):
+    question: str
+    top_k: int | None = None
+    min_similarity: float | None = None
+
+
+class DocumentCitationResponse(BaseModel):
+    document_id: int
+    chunk_index: int
+    page_number: int | None
+    text_excerpt: str
+    similarity: float
+
+
+class DocumentAskResponse(BaseModel):
+    question: str
+    answer: str
+    status: str
+    citations: list[DocumentCitationResponse]
 
 
 def _sanitize_path_component(value: str) -> str:
@@ -219,6 +241,49 @@ async def retrieve_document_chunks(
                 similarity=chunk.similarity,
             )
             for chunk in retrieved_chunks
+        ],
+    )
+
+
+@router.post("/{document_id}/ask", response_model=DocumentAskResponse)
+async def ask_document_question(
+    document_id: int,
+    payload: DocumentAskRequest,
+    db: Session = Depends(get_db),
+) -> DocumentAskResponse:
+    top_k = payload.top_k if payload.top_k is not None else RETRIEVAL_TOP_K
+    min_similarity = (
+        payload.min_similarity
+        if payload.min_similarity is not None
+        else RETRIEVAL_MIN_SIMILARITY
+    )
+
+    try:
+        result = answer_document_question(
+            db=db,
+            document_id=document_id,
+            question=payload.question,
+            top_k=top_k,
+            min_similarity=min_similarity,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail.endswith("was not found.") else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    return DocumentAskResponse(
+        question=result.question,
+        answer=result.answer,
+        status=result.status,
+        citations=[
+            DocumentCitationResponse(
+                document_id=citation.document_id,
+                chunk_index=citation.chunk_index,
+                page_number=citation.page_number,
+                text_excerpt=citation.text_excerpt,
+                similarity=citation.similarity,
+            )
+            for citation in result.citations
         ],
     )
 
