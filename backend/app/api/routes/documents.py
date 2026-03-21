@@ -90,11 +90,13 @@ class DocumentAskRequest(BaseModel):
 
 
 class DocumentCitationResponse(BaseModel):
+    citation_id: str
+    rank: int
     document_id: int
     chunk_index: int
     page_number: int | None
     text_excerpt: str
-    similarity: float
+    retrieval_score: float
 
 
 class DocumentAskResponse(BaseModel):
@@ -277,11 +279,13 @@ async def ask_document_question(
         status=result.status,
         citations=[
             DocumentCitationResponse(
+                citation_id=citation.citation_id,
+                rank=citation.rank,
                 document_id=citation.document_id,
                 chunk_index=citation.chunk_index,
                 page_number=citation.page_number,
                 text_excerpt=citation.text_excerpt,
-                similarity=citation.similarity,
+                retrieval_score=citation.retrieval_score,
             )
             for citation in result.citations
         ],

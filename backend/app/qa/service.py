@@ -50,11 +50,13 @@ STOPWORDS = {
 
 @dataclass(frozen=True)
 class Citation:
+    citation_id: str
+    rank: int
     document_id: int
     chunk_index: int
     page_number: int | None
     text_excerpt: str
-    similarity: float
+    retrieval_score: float
 
 
 @dataclass(frozen=True)
@@ -98,14 +100,16 @@ def _excerpt(text: str, limit: int = 240) -> str:
 
 def _build_citations(document_id: int, chunks: list[RetrievedChunk]) -> list[Citation]:
     citations: list[Citation] = []
-    for chunk in chunks:
+    for rank, chunk in enumerate(chunks, start=1):
         citations.append(
             Citation(
+                citation_id=f"C{rank}",
+                rank=rank,
                 document_id=document_id,
                 chunk_index=chunk.chunk_index,
                 page_number=chunk.page_number,
-                text_excerpt=_excerpt(chunk.text),
-                similarity=chunk.similarity,
+                text_excerpt=_excerpt(chunk.text, limit=180),
+                retrieval_score=chunk.similarity,
             )
         )
     return citations
@@ -191,9 +195,15 @@ def answer_document_question(
             citations=_build_citations(document_id=document_id, chunks=retrieved_chunks[:3]),
         )
 
+    citations = _build_citations(document_id=document_id, chunks=answer_chunks)
+    answer_with_citations = " ".join(
+        f"{sentence} [{citation.citation_id}]"
+        for sentence, citation in zip(answer_sentences, citations, strict=True)
+    )
+
     return QuestionAnswerResult(
         question=normalized_question,
-        answer=" ".join(answer_sentences),
+        answer=answer_with_citations,
         status=ANSWERED_STATUS,
-        citations=_build_citations(document_id=document_id, chunks=answer_chunks),
+        citations=citations,
     )

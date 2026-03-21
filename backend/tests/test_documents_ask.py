@@ -77,14 +77,19 @@ def _ask(document_id: int, payload: dict[str, object]) -> httpx.Response:
 def test_ask_endpoint_returns_grounded_answer_with_citations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    long_sentence = (
+        "Revenue increased 12 percent in Q4 due to subscription expansion in enterprise "
+        "accounts and stronger renewal rates across strategic segments with predictable "
+        "seasonal demand and disciplined pricing execution."
+    )
     document_id = _seed_document_with_chunks(
         status="ready",
         chunk_specs=[
             (
                 0,
                 1,
-                "Revenue increased 12 percent in Q4. Gross margin remained stable.",
-                10,
+                f"{long_sentence} Gross margin remained stable.",
+                31,
                 _make_embedding(1.0, 0.0),
             ),
             (
@@ -111,13 +116,22 @@ def test_ask_endpoint_returns_grounded_answer_with_citations(
     payload = response.json()
     assert payload["status"] == "answered"
     assert payload["question"] == "What happened to revenue in Q4?"
-    assert "Revenue increased 12 percent in Q4." in payload["answer"]
+    assert "Revenue increased 12 percent in Q4" in payload["answer"]
+    assert "[C1]" in payload["answer"]
     assert len(payload["citations"]) >= 1
     first_citation = payload["citations"][0]
+    assert first_citation["citation_id"] == "C1"
+    assert first_citation["rank"] == 1
     assert first_citation["document_id"] == document_id
     assert first_citation["chunk_index"] == 0
     assert first_citation["page_number"] == 1
     assert "Revenue increased" in first_citation["text_excerpt"]
+    assert len(first_citation["text_excerpt"]) <= 180
+    assert first_citation["text_excerpt"].endswith("...")
+    assert isinstance(first_citation["retrieval_score"], float)
+    assert [item["citation_id"] for item in payload["citations"]] == [
+        f"C{index}" for index in range(1, len(payload["citations"]) + 1)
+    ]
 
 
 def test_ask_endpoint_returns_insufficient_evidence_when_below_threshold(
@@ -175,6 +189,8 @@ def test_ask_endpoint_returns_insufficient_evidence_for_weak_context(
     payload = response.json()
     assert payload["status"] == "insufficient_evidence"
     assert len(payload["citations"]) == 1
+    assert payload["citations"][0]["citation_id"] == "C1"
+    assert payload["citations"][0]["rank"] == 1
     assert payload["citations"][0]["chunk_index"] == 0
     assert "Insufficient evidence" in payload["answer"]
 
