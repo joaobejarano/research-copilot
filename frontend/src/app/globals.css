@@ -140,6 +140,61 @@ a:hover {
   color: #1e3a8a;
 }
 
+.chunks-section {
+  margin-top: 20px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 14px;
+}
+
+.chunks-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.chunks-section h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.chunks-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.chunk-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  padding: 12px;
+}
+
+.chunk-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: #374151;
+  font-size: 0.9rem;
+}
+
+.chunk-text {
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
 .error-panel {
   display: flex;
   flex-wrap: wrap;

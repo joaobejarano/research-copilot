@@ -3,8 +3,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiClientError } from "../../lib/api/client";
-import { getDocumentDetail, listDocuments, processDocument } from "../../lib/api/documents";
+import {
+  getDocumentChunks,
+  getDocumentDetail,
+  listDocuments,
+  processDocument
+} from "../../lib/api/documents";
 import type {
+  DocumentChunkModel,
   DocumentStatusModel,
   GetDocumentDetailResponseModel
 } from "../../lib/api/models/documents";
@@ -50,6 +56,10 @@ export default function DocumentsPage() {
   const [processingStatusMessage, setProcessingStatusMessage] = useState<string | null>(null);
   const [lastProcessedDocumentId, setLastProcessedDocumentId] = useState<number | null>(null);
   const [lastProcessChunkCount, setLastProcessChunkCount] = useState<number | null>(null);
+  const [documentChunks, setDocumentChunks] = useState<DocumentChunkModel[]>([]);
+  const [chunksCountFromApi, setChunksCountFromApi] = useState<number | null>(null);
+  const [isChunksLoading, setIsChunksLoading] = useState<boolean>(false);
+  const [chunksErrorMessage, setChunksErrorMessage] = useState<string | null>(null);
 
   async function loadDocuments(): Promise<void> {
     setIsLoading(true);
@@ -90,6 +100,10 @@ export default function DocumentsPage() {
       setProcessingStatusMessage(null);
       setLastProcessedDocumentId(null);
       setLastProcessChunkCount(null);
+      setDocumentChunks([]);
+      setChunksCountFromApi(null);
+      setIsChunksLoading(false);
+      setChunksErrorMessage(null);
       return;
     }
 
@@ -124,7 +138,38 @@ export default function DocumentsPage() {
       }
     }
 
+    async function loadSelectedDocumentChunks(): Promise<void> {
+      setIsChunksLoading(true);
+      setChunksErrorMessage(null);
+      setDocumentChunks([]);
+      setChunksCountFromApi(null);
+
+      try {
+        const chunksResponse = await getDocumentChunks({ documentId });
+        if (isCancelled) {
+          return;
+        }
+
+        const orderedChunks = [...chunksResponse.chunks].sort(
+          (leftChunk, rightChunk) => leftChunk.chunk_index - rightChunk.chunk_index
+        );
+
+        setDocumentChunks(orderedChunks);
+        setChunksCountFromApi(chunksResponse.chunk_count);
+      } catch (error) {
+        if (isCancelled) {
+          return;
+        }
+        setChunksErrorMessage(toErrorMessage(error));
+      } finally {
+        if (!isCancelled) {
+          setIsChunksLoading(false);
+        }
+      }
+    }
+
     void loadSelectedDocumentDetail();
+    void loadSelectedDocumentChunks();
 
     return () => {
       isCancelled = true;
@@ -148,6 +193,30 @@ export default function DocumentsPage() {
       setDetailErrorMessage(toErrorMessage(error));
     } finally {
       setIsDetailLoading(false);
+    }
+  }
+
+  async function refreshSelectedDocumentChunks(): Promise<void> {
+    if (selectedDocumentId === null) {
+      return;
+    }
+
+    setIsChunksLoading(true);
+    setChunksErrorMessage(null);
+
+    try {
+      const chunksResponse = await getDocumentChunks({ documentId: selectedDocumentId });
+      const orderedChunks = [...chunksResponse.chunks].sort(
+        (leftChunk, rightChunk) => leftChunk.chunk_index - rightChunk.chunk_index
+      );
+      setDocumentChunks(orderedChunks);
+      setChunksCountFromApi(chunksResponse.chunk_count);
+    } catch (error) {
+      setDocumentChunks([]);
+      setChunksCountFromApi(null);
+      setChunksErrorMessage(toErrorMessage(error));
+    } finally {
+      setIsChunksLoading(false);
     }
   }
 
@@ -187,6 +256,7 @@ export default function DocumentsPage() {
       const refreshedDetail = await getDocumentDetail({ documentId });
       setSelectedDocumentDetail(refreshedDetail);
       setDocuments((currentDocuments) => replaceDocumentInList(currentDocuments, refreshedDetail));
+      await refreshSelectedDocumentChunks();
     } catch (error) {
       setProcessingErrorMessage(toErrorMessage(error));
       setProcessingStatusMessage(`Status transition: ${previousStatus} -> processing -> failed`);
@@ -200,6 +270,8 @@ export default function DocumentsPage() {
       } catch {
         // Keep the last known detail when refresh fails after processing.
       }
+
+      await refreshSelectedDocumentChunks();
     } finally {
       setIsProcessing(false);
     }
@@ -339,6 +411,61 @@ export default function DocumentsPage() {
                     <p>Document processing failed: {processingErrorMessage}</p>
                   </section>
                 ) : null}
+
+                <section className="chunks-section">
+                  <div className="chunks-section-header">
+                    <h3>Chunks</h3>
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => void refreshSelectedDocumentChunks()}
+                      disabled={isChunksLoading || isProcessing || isDetailLoading}
+                    >
+                      {isChunksLoading ? "Refreshing chunks..." : "Refresh chunks"}
+                    </button>
+                  </div>
+
+                  {isChunksLoading ? <p>Loading chunks...</p> : null}
+
+                  {!isChunksLoading && chunksErrorMessage ? (
+                    <section className="error-panel">
+                      <p>Could not load chunks: {chunksErrorMessage}</p>
+                      <button
+                        type="button"
+                        className="button"
+                        onClick={() => void refreshSelectedDocumentChunks()}
+                        disabled={isProcessing || isDetailLoading}
+                      >
+                        Retry chunks
+                      </button>
+                    </section>
+                  ) : null}
+
+                  {!isChunksLoading && !chunksErrorMessage && chunksCountFromApi !== null ? (
+                    <p className="chunk-count-text">chunks_count: {chunksCountFromApi}</p>
+                  ) : null}
+
+                  {!isChunksLoading && !chunksErrorMessage && documentChunks.length === 0 ? (
+                    <p>No chunks available for this document.</p>
+                  ) : null}
+
+                  {!isChunksLoading && !chunksErrorMessage && documentChunks.length > 0 ? (
+                    <div className="chunks-list">
+                      {documentChunks.map((chunk) => (
+                        <article key={chunk.chunk_index} className="chunk-card">
+                          <header className="chunk-meta">
+                            <span>chunk_index: {chunk.chunk_index}</span>
+                            <span>
+                              page_number: {chunk.page_number === null ? "null" : chunk.page_number}
+                            </span>
+                            <span>token_count: {chunk.token_count}</span>
+                          </header>
+                          <div className="chunk-text">{chunk.text}</div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                </section>
               </>
             ) : null}
           </section>
