@@ -325,6 +325,11 @@ export default function DocumentsPage() {
     selectedDocumentDetail !== null &&
     lastProcessedDocumentId === selectedDocumentDetail.id &&
     lastProcessChunkCount !== null;
+  const readyDocumentsCount = documents.filter((document) => document.status === "ready").length;
+  const selectedDocumentSummary =
+    selectedDocumentId === null
+      ? null
+      : documents.find((document) => document.id === selectedDocumentId) ?? null;
 
   return (
     <main className="container dashboard-container">
@@ -336,7 +341,29 @@ export default function DocumentsPage() {
         <Link href="/">Back to home</Link>
       </header>
 
-      {isLoading ? <p>Loading documents...</p> : null}
+      <section className="dashboard-summary">
+        <article className="summary-card">
+          <p className="summary-label">documents</p>
+          <p className="summary-value">{documents.length}</p>
+        </article>
+        <article className="summary-card">
+          <p className="summary-label">ready</p>
+          <p className="summary-value">{readyDocumentsCount}</p>
+        </article>
+        <article className="summary-card">
+          <p className="summary-label">selected</p>
+          <p className="summary-value">
+            {selectedDocumentSummary ? `#${selectedDocumentSummary.id}` : "none"}
+          </p>
+        </article>
+      </section>
+
+      {isLoading ? (
+        <section className="state-panel">
+          <p className="state-title">Loading documents...</p>
+          <p>Fetching dashboard data from the API.</p>
+        </section>
+      ) : null}
 
       {!isLoading && errorMessage ? (
         <section className="error-panel">
@@ -348,17 +375,30 @@ export default function DocumentsPage() {
       ) : null}
 
       {!isLoading && !errorMessage && documents.length === 0 ? (
-        <p>No documents found.</p>
+        <section className="state-panel">
+          <p className="state-title">No documents yet</p>
+          <p>Upload a document through the API to start inspecting details, chunks, and grounded Q&A.</p>
+        </section>
       ) : null}
 
       {!isLoading && !errorMessage && documents.length > 0 ? (
         <>
           <section className="document-detail-panel">
             <h2>Document detail</h2>
+            <p className="section-note">
+              Select a document to inspect metadata, processing status, grounded Q&A, and chunks.
+            </p>
 
-            {selectedDocumentId === null ? <p>Select a document from the list.</p> : null}
+            {selectedDocumentId === null ? (
+              <section className="state-panel compact">
+                <p className="state-title">No document selected</p>
+                <p>Choose a row from the documents table below.</p>
+              </section>
+            ) : null}
 
-            {selectedDocumentId !== null && isDetailLoading ? <p>Loading selected document...</p> : null}
+            {selectedDocumentId !== null && isDetailLoading ? (
+              <p className="inline-loading">Loading selected document...</p>
+            ) : null}
 
             {selectedDocumentId !== null && !isDetailLoading && detailErrorMessage ? (
               <section className="error-panel">
@@ -553,6 +593,10 @@ export default function DocumentsPage() {
                         )}
                       </div>
                     </section>
+                  ) : !isAskingQuestion && !askErrorMessage ? (
+                    <p className="empty-hint">
+                      Submit a question to see a grounded answer with citations.
+                    </p>
                   ) : null}
                 </section>
 
@@ -569,7 +613,7 @@ export default function DocumentsPage() {
                     </button>
                   </div>
 
-                  {isChunksLoading ? <p>Loading chunks...</p> : null}
+                  {isChunksLoading ? <p className="inline-loading">Loading chunks...</p> : null}
 
                   {!isChunksLoading && chunksErrorMessage ? (
                     <section className="error-panel">
@@ -590,7 +634,7 @@ export default function DocumentsPage() {
                   ) : null}
 
                   {!isChunksLoading && !chunksErrorMessage && documentChunks.length === 0 ? (
-                    <p>No chunks available for this document.</p>
+                    <p className="empty-hint">No chunks available for this document.</p>
                   ) : null}
 
                   {!isChunksLoading && !chunksErrorMessage && documentChunks.length > 0 ? (
@@ -614,7 +658,13 @@ export default function DocumentsPage() {
             ) : null}
           </section>
 
-          <section className="documents-table-wrapper">
+          <section className="documents-table-section">
+            <div className="section-header-row">
+              <h2>Documents list</h2>
+              <p>Select one document at a time.</p>
+            </div>
+
+            <section className="documents-table-wrapper">
             <table className="documents-table">
               <thead>
                 <tr>
@@ -653,6 +703,7 @@ export default function DocumentsPage() {
                 ))}
               </tbody>
             </table>
+            </section>
           </section>
         </>
       ) : null}
