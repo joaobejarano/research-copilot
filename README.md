@@ -1,38 +1,40 @@
 # Research Copilot
 
-Research Copilot is in Stage 4 with a minimal analyst dashboard on top of the Stage 3 document APIs.
+Research Copilot is in Stage 5. Stage 4 provides a minimal analyst dashboard, and Stage 5 adds structured, document-scoped research workflows in the backend.
 
-## How the Stage 4 dashboard works
+## How Stage 5 research workflows work
 
-The frontend dashboard lives at `GET /documents` in the Next.js app and calls existing backend endpoints directly:
+Stage 5 introduces strict JSON workflows that use retrieved chunks from one processed document:
 
-- `GET /documents` for the document list
-- `GET /documents/{document_id}` for selected document detail
-- `POST /documents/{document_id}/process` to process non-ready documents
-- `GET /documents/{document_id}/chunks` for chunk inspection
-- `POST /documents/{document_id}/ask` for grounded Q&A
+- `POST /documents/{document_id}/memo`
+- `POST /documents/{document_id}/extract/kpis`
+- `POST /documents/{document_id}/extract/risks`
+- `POST /documents/{document_id}/timeline`
 
-The dashboard keeps state local to the page and provides explicit loading, error, and empty states for each interaction area.
+All outputs are:
+
+- document-scoped
+- schema-validated
+- grounded with `evidence.citations`
+- returned as `insufficient_evidence` when context is weak
 
 ## Required environment variables
 
-### Frontend
-
-Stage 4 frontend requires:
-
-- `NEXT_PUBLIC_API_BASE_URL`
-  - Example: `http://127.0.0.1:8000`
-  - Used by the frontend API client for all dashboard requests
-
-Set in `frontend/.env.local`:
+Create backend environment:
 
 ```bash
-cp frontend/.env.example frontend/.env.local
+cp .env.example .env
 ```
 
-### Backend
+Stage 5 backend variables:
 
-Backend environment is unchanged from Stage 3 and configured from repository root `.env`:
+- `OPENAI_API_KEY`
+- `LLM_PROVIDER` (default: `openai`)
+- `LLM_MODEL` (example: `gpt-4.1-mini`)
+- `MAX_WORKFLOW_CITATIONS`
+- `MAX_WORKFLOW_ITEMS`
+
+Also required for ingestion/retrieval:
 
 - `DATABASE_URL` (or `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`)
 - `STORAGE_DIR`
@@ -44,11 +46,11 @@ Backend environment is unchanged from Stage 3 and configured from repository roo
 - `RETRIEVAL_TOP_K`
 - `RETRIEVAL_MIN_SIMILARITY`
 
-```bash
-cp .env.example .env
-```
+If you run the Stage 4 frontend dashboard:
 
-## Run backend and frontend together
+- `NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`
+
+## Run backend (and optional frontend)
 
 1. Install backend dependencies:
 ```bash
@@ -56,85 +58,88 @@ cd backend
 python -m pip install -r requirements-dev.txt
 ```
 
-2. Install frontend dependencies:
-```bash
-cd frontend
-npm install
-```
-
-3. Start local Postgres (optional if you already have a reachable Postgres):
+2. Start local Postgres (if needed):
 ```bash
 docker compose -f infra/docker-compose.yml up -d
 ```
 
-4. Start backend API:
+3. Start backend:
 ```bash
 cd backend
 uvicorn app.main:app --reload
 ```
 
-5. Start frontend app (new terminal):
+Optional Stage 4 dashboard:
+
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-Dashboard URL: `http://localhost:3000/documents`  
-API docs: `http://127.0.0.1:8000/docs`
+API docs: `http://127.0.0.1:8000/docs`  
+Dashboard: `http://localhost:3000/documents`
 
-## Supported analyst workflows in Stage 4
+## How to generate a memo
 
-- view all ingested documents in a table
-- select one document and inspect its metadata
-- process a selected document and observe status transitions
-- inspect document chunks (`chunk_index`, `page_number`, `token_count`, `text`)
-- ask grounded questions about one selected document and inspect citations
-
-Still out of scope in Stage 4:
-
-- memo generation UI
-- multi-document Q&A UI
-- advanced filtering/pagination
-- authentication
-
-## Manual dashboard test guide
-
-1. Ensure backend and frontend are running.
-2. If no documents exist, upload one via API:
 ```bash
-curl -X POST "http://127.0.0.1:8000/documents/upload" \
-  -F "company_name=Acme Corp" \
-  -F "document_type=financial_report" \
-  -F "period=2024-Q4" \
-  -F "file=@./report.txt;type=text/plain"
-```
-3. Open `http://localhost:3000/documents`.
-4. Verify list and selection behavior:
-  - documents table loads
-  - selecting a row updates the detail panel
-5. Verify processing behavior:
-  - for non-ready document, click `Process document`
-  - status transition appears
-  - detail refreshes and `chunk_count` appears when returned
-6. Verify chunks behavior:
-  - chunks section loads
-  - entries are shown in `chunk_index` order with readable text blocks
-7. Verify grounded Q&A behavior:
-  - submit a question
-  - result shows `question`, `answer`, `status`, `citations`
-  - both `answered` and `insufficient_evidence` responses render correctly
-
-## Local checks
-
-Frontend:
-```bash
-cd frontend
-npm run typecheck
-npm run build
+curl -X POST "http://127.0.0.1:8000/documents/{document_id}/memo" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instruction": "Generate a grounded investment memo.",
+    "top_k": 5,
+    "min_similarity": 0.2
+  }'
 ```
 
-Backend:
+## How to extract KPIs
+
 ```bash
-cd backend
-pytest -q
+curl -X POST "http://127.0.0.1:8000/documents/{document_id}/extract/kpis" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instruction": "Extract decision-relevant KPIs.",
+    "top_k": 5,
+    "min_similarity": 0.2
+  }'
+```
+
+## How to extract risks
+
+```bash
+curl -X POST "http://127.0.0.1:8000/documents/{document_id}/extract/risks" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instruction": "Extract material risks.",
+    "top_k": 5,
+    "min_similarity": 0.2
+  }'
+```
+
+## How to build a timeline
+
+```bash
+curl -X POST "http://127.0.0.1:8000/documents/{document_id}/timeline" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instruction": "Build a timeline of key events.",
+    "top_k": 5,
+    "min_similarity": 0.2
+  }'
+```
+
+Note: document must exist and be `ready` (processed) before these endpoints run.
+
+## How to run tests
+
+Run all backend tests:
+
+```bash
+pytest -q backend/tests
+```
+
+Run only workflow tests:
+
+```bash
+pytest -q backend/tests/test_workflow_*.py backend/tests/test_documents_memo.py backend/tests/test_documents_workflows.py
 ```

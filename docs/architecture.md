@@ -1,74 +1,99 @@
-# Stage 4 Architecture Additions
+# Stage 5 Architecture Additions
 
-This document describes only what Stage 4 adds on top of Stage 3 backend capabilities.
+This document describes only what Stage 5 adds to the backend.
 
-## Scope Added in Stage 4
+## Scope Added in Stage 5
 
-- minimal analyst dashboard page in frontend (`/documents`)
-- frontend API client integration with existing backend endpoints
-- list and selection flow for documents
-- selected document detail panel
-- explicit processing action from the dashboard
-- chunk inspection UI
-- grounded Q&A UI with citation rendering
-- local loading, empty, and error states per section
+- shared structured workflow service for document-scoped research tasks
+- reusable LLM provider abstraction for strict JSON outputs
+- explicit schemas for:
+  - memo generation
+  - KPI extraction
+  - risk extraction
+  - timeline building
+- shared evidence/citation structures across all workflow outputs
+- document-scoped API endpoints for each workflow
 
-Still out of scope in Stage 4:
+Out of scope in Stage 5:
 
-- memo generation UI
-- multi-document dashboard workflows
-- advanced filtering/pagination
-- authentication
+- frontend workflow UI
+- agent orchestration
+- workflow persistence
+- cross-document workflows
 
-## Frontend Structure Added
+## Backend Components Added
 
-### API client layer (`frontend/src/lib`)
+### Workflow schemas (`backend/app/workflows/schemas.py`)
 
-- `api/client.ts`
-  - shared JSON request wrapper
-  - normalizes API error handling
-- `api/models/documents.ts`
-  - typed request/response contracts for:
-    - list documents
-    - document detail
-    - process document
-    - document chunks
-    - grounded ask
-- `api/documents.ts`
-  - explicit endpoint functions with no complex abstraction
-- `config/env.ts`
-  - frontend runtime config for `NEXT_PUBLIC_API_BASE_URL`
+Defines strict Pydantic models:
 
-### Dashboard page (`frontend/src/app/documents/page.tsx`)
+- shared:
+  - `WorkflowCitation`
+  - `WorkflowEvidence`
+  - base request model with `document_id`, `instruction`, retrieval controls
+- memo:
+  - `MemoGenerationRequest`, `MemoDraft`, `MemoGenerationOutput`
+- KPI:
+  - `KPIExtractionRequest`, `KPIItem`, `KPIDraft`, `KPIExtractionOutput`
+- risk:
+  - `RiskExtractionRequest`, `RiskItem`, `RiskDraft`, `RiskExtractionOutput`
+- timeline:
+  - `TimelineBuildingRequest`, `TimelineEvent`, `TimelineDraft`, `TimelineBuildingOutput`
 
-Single page with local React state for:
+### LLM provider abstraction (`backend/app/workflows/llm.py`)
 
-- document list loading/error/empty
-- selected document detail loading/error
-- processing action status and failure feedback
-- chunks loading/error/empty
-- grounded Q&A submit/loading/error/result
+- `StructuredLLMProvider` protocol
+- `OpenAIStructuredLLMProvider` implementation using JSON schema response format
+- provider factory via `get_llm_provider(...)`
 
-The page intentionally avoids global state libraries and keeps fetch logic explicit in the route component.
+### Workflow orchestration service (`backend/app/workflows/service.py`)
 
-## Stage 4 Runtime Flow
+- `StructuredWorkflowService` exposes independent methods:
+  - `generate_memo`
+  - `extract_kpis`
+  - `extract_risks`
+  - `build_timeline`
+- each method:
+  - retrieves evidence chunks for one document
+  - returns `insufficient_evidence` when retrieval is weak
+  - requests strict structured output from LLM
+  - validates cited `C1..Cn` ids against retrieved evidence
 
-1. Frontend loads `/documents`.
-2. UI requests `GET /documents` and renders the list.
-3. Selecting a row triggers:
-  - `GET /documents/{document_id}`
-  - `GET /documents/{document_id}/chunks`
-4. For non-ready documents, user can trigger:
-  - `POST /documents/{document_id}/process`
-  - then refresh detail and chunks
-5. For grounded Q&A:
-  - user submits question
-  - frontend calls `POST /documents/{document_id}/ask`
-  - UI renders `question`, `answer`, `status`, and `citations`
+### API routes (`backend/app/api/routes/documents.py`)
 
-## UX Behavior in Stage 4
+Stage 5 document-scoped endpoints:
 
-- sections are intentionally simple: detail, grounded Q&A, and chunks
-- long chunk and citation text uses scrollable containers for readability
-- each section has explicit loading and error states with retry controls
-- empty states are present when no documents/chunks/results are available
+- `POST /documents/{document_id}/memo`
+- `POST /documents/{document_id}/extract/kpis`
+- `POST /documents/{document_id}/extract/risks`
+- `POST /documents/{document_id}/timeline`
+
+Route behavior:
+
+- checks document exists
+- requires document status `ready`
+- invokes corresponding workflow method
+- returns strict structured response with evidence
+
+## Stage 5 Runtime Flow
+
+1. Caller sends workflow request for a single `document_id`.
+2. API validates document readiness.
+3. Workflow service retrieves top-k relevant chunks.
+4. Retrieved chunks are normalized into `evidence.citations` (`C1`, `C2`, ...).
+5. LLM returns strict JSON matching workflow schema.
+6. Service validates citations referenced by output items.
+7. API returns structured result with status:
+  - `generated` or `insufficient_evidence` for memo
+  - `completed` or `insufficient_evidence` for KPI/risk/timeline
+
+## Test Coverage Added
+
+- schema validation tests for workflow models
+- service tests for memo/KPI/risk/timeline behavior
+- endpoint tests for:
+  - successful structured output
+  - insufficient evidence handling
+  - `400` when document is not ready
+  - `404` for missing document
+- integration-style workflow tests with real retrieval and mocked LLM
