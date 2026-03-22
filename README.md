@@ -1,77 +1,65 @@
 # Research Copilot
 
-Research Copilot is in Stage 3 with document-scoped semantic retrieval and grounded Q&A.
+Research Copilot is in Stage 4 with a minimal analyst dashboard on top of the Stage 3 document APIs.
 
-Current Stage 3 implementation includes:
-- document upload and metadata endpoints
-- synchronous processing endpoint (`POST /documents/{document_id}/process`)
-- parsing support for `.txt` and `.pdf`
-- deterministic chunking with configurable size and overlap
-- local embedding generation using `sentence-transformers`
-- chunk persistence in `document_chunks` with pgvector-compatible embeddings
-- chunk inspection endpoint (`GET /documents/{document_id}/chunks`)
-- semantic retrieval endpoint (`POST /documents/{document_id}/retrieve`)
-- grounded Q&A endpoint (`POST /documents/{document_id}/ask`) with citations
+## How the Stage 4 dashboard works
 
-## How Stage 3 retrieval works
+The frontend dashboard lives at `GET /documents` in the Next.js app and calls existing backend endpoints directly:
 
-1. The client sends a question to `POST /documents/{document_id}/retrieve`.
-2. The backend generates an embedding for the question.
-3. Retrieval is scoped to the requested `document_id` only.
-4. Chunks are ranked by vector similarity and filtered by `min_similarity`.
-5. Up to `top_k` chunks are returned with:
-- `chunk_index`
-- `page_number`
-- `text`
-- `token_count`
-- `similarity`
+- `GET /documents` for the document list
+- `GET /documents/{document_id}` for selected document detail
+- `POST /documents/{document_id}/process` to process non-ready documents
+- `GET /documents/{document_id}/chunks` for chunk inspection
+- `POST /documents/{document_id}/ask` for grounded Q&A
 
-Notes:
-- Chunks without embeddings are skipped.
-- In PostgreSQL, ranking uses pgvector distance.
-- In non-PostgreSQL test/local fallback paths, ranking uses cosine similarity in Python.
+The dashboard keeps state local to the page and provides explicit loading, error, and empty states for each interaction area.
 
 ## Required environment variables
 
-Stage 3 requires:
+### Frontend
 
-- `DATABASE_URL`
-  - Example: `postgresql+psycopg://research_copilot:research_copilot@localhost:5432/research_copilot`
+Stage 4 frontend requires:
+
+- `NEXT_PUBLIC_API_BASE_URL`
+  - Example: `http://127.0.0.1:8000`
+  - Used by the frontend API client for all dashboard requests
+
+Set in `frontend/.env.local`:
+
+```bash
+cp frontend/.env.example frontend/.env.local
+```
+
+### Backend
+
+Backend environment is unchanged from Stage 3 and configured from repository root `.env`:
+
+- `DATABASE_URL` (or `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`)
 - `STORAGE_DIR`
-  - Example: `storage/documents` (relative to repository root) or an absolute path
 - `CHUNK_SIZE`
-  - Example: `800`
 - `CHUNK_OVERLAP`
-  - Example: `120`
 - `EMBEDDING_PROVIDER`
-  - Stage 3 value: `local`
 - `EMBEDDING_MODEL`
-  - Example: `sentence-transformers/all-MiniLM-L6-v2`
 - `EMBEDDING_DIMENSION`
-  - Example: `384`
 - `RETRIEVAL_TOP_K`
-  - Default: `5`
 - `RETRIEVAL_MIN_SIMILARITY`
-  - Default: `0.2`
 
-If `DATABASE_URL` is not set, backend builds one from:
-- `POSTGRES_HOST`
-- `POSTGRES_PORT`
-- `POSTGRES_DB`
-- `POSTGRES_USER`
-- `POSTGRES_PASSWORD`
+```bash
+cp .env.example .env
+```
 
-## Run backend locally
+## Run backend and frontend together
 
-1. Install dependencies:
+1. Install backend dependencies:
 ```bash
 cd backend
 python -m pip install -r requirements-dev.txt
 ```
 
-2. Configure environment (from repository root):
+2. Install frontend dependencies:
 ```bash
-cp .env.example .env
+cd frontend
+npm install
 ```
 
 3. Start local Postgres (optional if you already have a reachable Postgres):
@@ -79,17 +67,40 @@ cp .env.example .env
 docker compose -f infra/docker-compose.yml up -d
 ```
 
-4. Start API:
+4. Start backend API:
 ```bash
 cd backend
 uvicorn app.main:app --reload
 ```
 
+5. Start frontend app (new terminal):
+```bash
+cd frontend
+npm run dev
+```
+
+Dashboard URL: `http://localhost:3000/documents`  
 API docs: `http://127.0.0.1:8000/docs`
 
-## Upload and process a document
+## Supported analyst workflows in Stage 4
 
-1. Upload:
+- view all ingested documents in a table
+- select one document and inspect its metadata
+- process a selected document and observe status transitions
+- inspect document chunks (`chunk_index`, `page_number`, `token_count`, `text`)
+- ask grounded questions about one selected document and inspect citations
+
+Still out of scope in Stage 4:
+
+- memo generation UI
+- multi-document Q&A UI
+- advanced filtering/pagination
+- authentication
+
+## Manual dashboard test guide
+
+1. Ensure backend and frontend are running.
+2. If no documents exist, upload one via API:
 ```bash
 curl -X POST "http://127.0.0.1:8000/documents/upload" \
   -F "company_name=Acme Corp" \
@@ -97,79 +108,33 @@ curl -X POST "http://127.0.0.1:8000/documents/upload" \
   -F "period=2024-Q4" \
   -F "file=@./report.txt;type=text/plain"
 ```
+3. Open `http://localhost:3000/documents`.
+4. Verify list and selection behavior:
+  - documents table loads
+  - selecting a row updates the detail panel
+5. Verify processing behavior:
+  - for non-ready document, click `Process document`
+  - status transition appears
+  - detail refreshes and `chunk_count` appears when returned
+6. Verify chunks behavior:
+  - chunks section loads
+  - entries are shown in `chunk_index` order with readable text blocks
+7. Verify grounded Q&A behavior:
+  - submit a question
+  - result shows `question`, `answer`, `status`, `citations`
+  - both `answered` and `insufficient_evidence` responses render correctly
 
-2. Process:
+## Local checks
+
+Frontend:
 ```bash
-curl -X POST "http://127.0.0.1:8000/documents/1/process"
+cd frontend
+npm run typecheck
+npm run build
 ```
 
-Example response:
-```json
-{
-  "document_id": 1,
-  "status": "ready",
-  "chunk_count": 3
-}
-```
-
-## Ask a grounded question
-
-Request:
-```bash
-curl -X POST "http://127.0.0.1:8000/documents/1/ask" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What happened to revenue in Q4?",
-    "top_k": 5,
-    "min_similarity": 0.2
-  }'
-```
-
-Example successful grounded response:
-```json
-{
-  "question": "What happened to revenue in Q4?",
-  "answer": "Revenue increased 12 percent in Q4. [C1]",
-  "status": "answered",
-  "citations": [
-    {
-      "citation_id": "C1",
-      "rank": 1,
-      "document_id": 1,
-      "chunk_index": 0,
-      "page_number": 1,
-      "text_excerpt": "Revenue increased 12 percent in Q4 ...",
-      "retrieval_score": 0.92
-    }
-  ]
-}
-```
-
-## What `insufficient_evidence` means
-
-`status: "insufficient_evidence"` means the system could not produce a grounded answer from retrieved context.
-
-This happens when:
-- no chunks pass retrieval threshold (`citations` is empty), or
-- chunks are retrieved but no sentence has enough lexical support for the question (`citations` contains top retrieved evidence snippets).
-
-In both cases, the API returns:
-- `answer`: `"Insufficient evidence to answer the question from retrieved context."`
-- `status`: `"insufficient_evidence"`
-
-## Run tests
-
-All backend tests:
+Backend:
 ```bash
 cd backend
 pytest -q
-```
-
-Stage 3 retrieval and grounded Q&A tests:
-```bash
-cd backend
-pytest -q \
-  tests/test_retrieval_service.py \
-  tests/test_documents_retrieve.py \
-  tests/test_documents_ask.py
 ```
