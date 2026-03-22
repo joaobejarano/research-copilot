@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { ApiClientError } from "../../lib/api/client";
 import {
+  askGroundedQuestion,
   getDocumentChunks,
   getDocumentDetail,
   listDocuments,
   processDocument
 } from "../../lib/api/documents";
 import type {
+  AskGroundedQuestionResponseModel,
   DocumentChunkModel,
   DocumentStatusModel,
   GetDocumentDetailResponseModel
@@ -60,6 +62,10 @@ export default function DocumentsPage() {
   const [chunksCountFromApi, setChunksCountFromApi] = useState<number | null>(null);
   const [isChunksLoading, setIsChunksLoading] = useState<boolean>(false);
   const [chunksErrorMessage, setChunksErrorMessage] = useState<string | null>(null);
+  const [questionInput, setQuestionInput] = useState<string>("");
+  const [isAskingQuestion, setIsAskingQuestion] = useState<boolean>(false);
+  const [askErrorMessage, setAskErrorMessage] = useState<string | null>(null);
+  const [askResult, setAskResult] = useState<AskGroundedQuestionResponseModel | null>(null);
 
   async function loadDocuments(): Promise<void> {
     setIsLoading(true);
@@ -104,6 +110,10 @@ export default function DocumentsPage() {
       setChunksCountFromApi(null);
       setIsChunksLoading(false);
       setChunksErrorMessage(null);
+      setQuestionInput("");
+      setIsAskingQuestion(false);
+      setAskErrorMessage(null);
+      setAskResult(null);
       return;
     }
 
@@ -143,6 +153,10 @@ export default function DocumentsPage() {
       setChunksErrorMessage(null);
       setDocumentChunks([]);
       setChunksCountFromApi(null);
+      setQuestionInput("");
+      setIsAskingQuestion(false);
+      setAskErrorMessage(null);
+      setAskResult(null);
 
       try {
         const chunksResponse = await getDocumentChunks({ documentId });
@@ -274,6 +288,36 @@ export default function DocumentsPage() {
       await refreshSelectedDocumentChunks();
     } finally {
       setIsProcessing(false);
+    }
+  }
+
+  async function handleAskQuestion(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+
+    if (selectedDocumentId === null || isAskingQuestion) {
+      return;
+    }
+
+    const normalizedQuestion = questionInput.trim();
+    if (normalizedQuestion.length === 0) {
+      setAskErrorMessage("Question is required.");
+      return;
+    }
+
+    setIsAskingQuestion(true);
+    setAskErrorMessage(null);
+
+    try {
+      const askResponse = await askGroundedQuestion({
+        documentId: selectedDocumentId,
+        question: normalizedQuestion
+      });
+      setAskResult(askResponse);
+    } catch (error) {
+      setAskResult(null);
+      setAskErrorMessage(toErrorMessage(error));
+    } finally {
+      setIsAskingQuestion(false);
     }
   }
 
@@ -411,6 +455,106 @@ export default function DocumentsPage() {
                     <p>Document processing failed: {processingErrorMessage}</p>
                   </section>
                 ) : null}
+
+                <section className="qa-section">
+                  <div className="qa-section-header">
+                    <h3>Grounded Q&A</h3>
+                  </div>
+
+                  <form className="qa-form" onSubmit={(event) => void handleAskQuestion(event)}>
+                    <label htmlFor="grounded-question-input" className="qa-label">
+                      Ask a question about this document
+                    </label>
+                    <textarea
+                      id="grounded-question-input"
+                      className="qa-input"
+                      value={questionInput}
+                      onChange={(event) => setQuestionInput(event.target.value)}
+                      placeholder="Example: What changed in revenue this quarter?"
+                      rows={3}
+                      disabled={isAskingQuestion || isProcessing || isDetailLoading}
+                    />
+                    <div className="qa-actions">
+                      <button
+                        type="submit"
+                        className="button"
+                        disabled={
+                          isAskingQuestion ||
+                          isProcessing ||
+                          isDetailLoading ||
+                          questionInput.trim().length === 0
+                        }
+                      >
+                        {isAskingQuestion ? "Asking..." : "Ask question"}
+                      </button>
+                    </div>
+                  </form>
+
+                  {isAskingQuestion ? <p>Generating grounded answer...</p> : null}
+
+                  {askErrorMessage ? (
+                    <section className="error-panel">
+                      <p>Grounded Q&A failed: {askErrorMessage}</p>
+                    </section>
+                  ) : null}
+
+                  {askResult ? (
+                    <section className="qa-result-card">
+                      <div className="qa-status-row">
+                        <span className="qa-status-label">status:</span>
+                        <span
+                          className={
+                            askResult.status === "answered"
+                              ? "qa-status-badge answered"
+                              : "qa-status-badge insufficient"
+                          }
+                        >
+                          {askResult.status}
+                        </span>
+                      </div>
+
+                      <div className="qa-result-block">
+                        <p className="qa-result-title">question</p>
+                        <p className="qa-result-text">{askResult.question}</p>
+                      </div>
+
+                      <div className="qa-result-block">
+                        <p className="qa-result-title">answer</p>
+                        <p className="qa-result-text">{askResult.answer}</p>
+                      </div>
+
+                      <div className="qa-result-block">
+                        <p className="qa-result-title">citations</p>
+                        {askResult.citations.length === 0 ? (
+                          <p className="qa-result-text">No citations returned.</p>
+                        ) : (
+                          <div className="citations-list">
+                            {[...askResult.citations]
+                              .sort((leftCitation, rightCitation) => leftCitation.rank - rightCitation.rank)
+                              .map((citation) => (
+                                <article key={citation.citation_id} className="citation-card">
+                                  <header className="citation-meta">
+                                    <span>{citation.citation_id}</span>
+                                    <span>rank: {citation.rank}</span>
+                                    <span>document_id: {citation.document_id}</span>
+                                    <span>chunk_index: {citation.chunk_index}</span>
+                                    <span>
+                                      page_number:{" "}
+                                      {citation.page_number === null ? "null" : citation.page_number}
+                                    </span>
+                                    <span>
+                                      retrieval_score: {citation.retrieval_score.toFixed(3)}
+                                    </span>
+                                  </header>
+                                  <div className="citation-text">{citation.text_excerpt}</div>
+                                </article>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  ) : null}
+                </section>
 
                 <section className="chunks-section">
                   <div className="chunks-section-header">
