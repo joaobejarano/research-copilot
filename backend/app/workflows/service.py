@@ -25,6 +25,7 @@ from app.workflows.schemas import (
     TimelineBuildingRequest,
     TimelineDraft,
     WORKFLOW_STATUS_COMPLETED,
+    WORKFLOW_STATUS_GENERATED,
     WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE,
     WorkflowCitation,
     WorkflowEvidence,
@@ -86,17 +87,13 @@ class StructuredWorkflowService:
             response_model=MemoDraft,
         )
         self._validate_citation_ids(
-            citation_ids=[
-                citation_id
-                for section in draft.sections
-                for citation_id in section.citation_ids
-            ],
+            citation_ids=self._memo_citation_ids(draft),
             evidence=context.evidence,
         )
 
         return MemoGenerationOutput(
             document_id=request.document_id,
-            status=WORKFLOW_STATUS_COMPLETED,
+            status=WORKFLOW_STATUS_GENERATED,
             memo=draft,
             evidence=context.evidence,
         )
@@ -312,6 +309,18 @@ class StructuredWorkflowService:
                 raise ValueError(
                     f"Workflow output referenced unknown citation_id '{citation_id}'."
                 )
+
+    @staticmethod
+    def _memo_citation_ids(draft: MemoDraft) -> list[str]:
+        citations_by_section = draft.citations_by_section
+        return [
+            *citations_by_section.company_overview,
+            *citations_by_section.key_developments,
+            *citations_by_section.risks,
+            *citations_by_section.catalysts,
+            *citations_by_section.kpis,
+            *citations_by_section.open_questions,
+        ]
 
     @staticmethod
     def _excerpt(text: str, limit: int = 240) -> str:

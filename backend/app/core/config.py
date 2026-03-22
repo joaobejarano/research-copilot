@@ -1,5 +1,14 @@
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+MODULE_PATH = Path(__file__).resolve()
+BACKEND_ROOT = MODULE_PATH.parents[2]
+PROJECT_ROOT = MODULE_PATH.parents[3]
+
+# Prefer repo-root .env, but also support backend/.env for local overrides.
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(BACKEND_ROOT / ".env")
 
 APP_NAME = os.getenv("RESEARCH_COPILOT_APP_NAME", "Research Copilot API")
 
@@ -17,7 +26,6 @@ DATABASE_URL = os.getenv(
     ),
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
 storage_dir_value = os.getenv("STORAGE_DIR", "storage/documents")
 storage_dir_path = Path(storage_dir_value)
 

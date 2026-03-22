@@ -1,9 +1,10 @@
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -19,11 +20,17 @@ from app.db.models.document_chunk import DocumentChunk
 from app.ingestion.processing import process_uploaded_document
 from app.qa.service import answer_document_question
 from app.retrieval.service import retrieve_relevant_chunks
+from app.workflows.schemas import MemoDraft, MemoGenerationRequest
+from app.workflows.service import StructuredWorkflowService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".doc", ".docx"}
 WRITE_CHUNK_SIZE = 1024 * 1024
+DEFAULT_MEMO_INSTRUCTION = (
+    "Generate a grounded investment memo with sections for company_overview, "
+    "key_developments, risks, catalysts, kpis, and open_questions."
+)
 
 
 class DocumentMetadataResponse(BaseModel):
@@ -104,6 +111,22 @@ class DocumentAskResponse(BaseModel):
     answer: str
     status: str
     citations: list[DocumentCitationResponse]
+
+
+class DocumentMemoRequest(BaseModel):
+    instruction: str = Field(default=DEFAULT_MEMO_INSTRUCTION, min_length=1, max_length=800)
+    top_k: int | None = Field(default=None, ge=1)
+    min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+
+class DocumentMemoResponse(BaseModel):
+    document_id: int
+    status: Literal["generated", "insufficient_evidence"]
+    memo: MemoDraft | None
+
+
+def get_structured_workflow_service() -> StructuredWorkflowService:
+    return StructuredWorkflowService()
 
 
 def _sanitize_path_component(value: str) -> str:
@@ -289,6 +312,53 @@ async def ask_document_question(
             )
             for citation in result.citations
         ],
+    )
+
+
+@router.post("/{document_id}/memo", response_model=DocumentMemoResponse)
+async def generate_document_memo(
+    document_id: int,
+    payload: DocumentMemoRequest | None = None,
+    db: Session = Depends(get_db),
+) -> DocumentMemoResponse:
+    normalized_payload = payload or DocumentMemoRequest()
+
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if document.status != "ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be processed and ready before memo generation.",
+        )
+
+    try:
+        workflow_service = get_structured_workflow_service()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Memo generation is not configured: {exc}",
+        ) from exc
+
+    try:
+        result = workflow_service.generate_memo(
+            db=db,
+            request=MemoGenerationRequest(
+                document_id=document_id,
+                instruction=normalized_payload.instruction,
+                top_k=normalized_payload.top_k,
+                min_similarity=normalized_payload.min_similarity,
+            ),
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail.endswith("was not found.") else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    return DocumentMemoResponse(
+        document_id=result.document_id,
+        status=result.status,
+        memo=result.memo,
     )
 
 

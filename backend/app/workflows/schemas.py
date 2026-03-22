@@ -7,6 +7,7 @@ from app.core.config import MAX_WORKFLOW_CITATIONS, MAX_WORKFLOW_ITEMS
 STRICT_MODEL_CONFIG = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 WORKFLOW_STATUS_COMPLETED: Literal["completed"] = "completed"
+WORKFLOW_STATUS_GENERATED: Literal["generated"] = "generated"
 WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE: Literal["insufficient_evidence"] = (
     "insufficient_evidence"
 )
@@ -48,16 +49,25 @@ class BaseWorkflowRequest(BaseModel):
     model_config = STRICT_MODEL_CONFIG
 
 
-class MemoSection(CitationBackedItem):
-    heading: str = Field(min_length=1, max_length=200)
-    body: str = Field(min_length=1, max_length=2000)
+class MemoCitationsBySection(BaseModel):
+    company_overview: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_CITATIONS)
+    key_developments: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_CITATIONS)
+    risks: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_CITATIONS)
+    catalysts: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_CITATIONS)
+    kpis: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_CITATIONS)
+    open_questions: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_CITATIONS)
+
+    model_config = STRICT_MODEL_CONFIG
 
 
 class MemoDraft(BaseModel):
-    memo_title: str = Field(min_length=1, max_length=240)
-    executive_summary: str = Field(min_length=1, max_length=2400)
-    sections: list[MemoSection] = Field(default_factory=list, max_length=MAX_WORKFLOW_ITEMS)
-    key_takeaways: list[str] = Field(default_factory=list, max_length=MAX_WORKFLOW_ITEMS)
+    company_overview: str = Field(min_length=1, max_length=2400)
+    key_developments: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_ITEMS)
+    risks: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_ITEMS)
+    catalysts: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_ITEMS)
+    kpis: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_ITEMS)
+    open_questions: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_ITEMS)
+    citations_by_section: MemoCitationsBySection
 
     model_config = STRICT_MODEL_CONFIG
 
@@ -69,7 +79,7 @@ class MemoGenerationRequest(BaseWorkflowRequest):
 class MemoGenerationOutput(BaseModel):
     workflow: Literal["memo_generation"] = "memo_generation"
     document_id: int = Field(ge=1)
-    status: Literal["completed", "insufficient_evidence"]
+    status: Literal["generated", "insufficient_evidence"]
     memo: MemoDraft | None = None
     evidence: WorkflowEvidence = Field(default_factory=WorkflowEvidence)
 

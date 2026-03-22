@@ -5,12 +5,12 @@ import pytest
 from app.retrieval.service import RetrievedChunk
 from app.workflows import service as workflow_service
 from app.workflows.schemas import (
+    MemoCitationsBySection,
     KPIDraft,
     KPIExtractionRequest,
     KPIItem,
     MemoDraft,
     MemoGenerationRequest,
-    MemoSection,
     RiskDraft,
     RiskExtractionRequest,
     RiskItem,
@@ -74,16 +74,20 @@ def test_generate_memo_returns_completed_with_retrieved_evidence(
     fake_provider = FakeLLMProvider(
         {
             MemoDraft: MemoDraft(
-                memo_title="Acme update",
-                executive_summary="Performance improved.",
-                sections=[
-                    MemoSection(
-                        heading="Revenue",
-                        body="Revenue grew in Q4.",
-                        citation_ids=["C1"],
-                    )
-                ],
-                key_takeaways=["Growth improved."],
+                company_overview="Acme provides enterprise software tools.",
+                key_developments=["Revenue grew in Q4."],
+                risks=["FX volatility remains a pressure point."],
+                catalysts=["New product release in Q1."],
+                kpis=["Revenue +12% YoY."],
+                open_questions=["Can growth persist above 10%?"],
+                citations_by_section=MemoCitationsBySection(
+                    company_overview=["C1"],
+                    key_developments=["C1"],
+                    risks=["C2"],
+                    catalysts=["C1"],
+                    kpis=["C1"],
+                    open_questions=["C2"],
+                ),
             )
         }
     )
@@ -99,9 +103,9 @@ def test_generate_memo_returns_completed_with_retrieved_evidence(
         request=MemoGenerationRequest(document_id=42, instruction="Generate memo"),
     )
 
-    assert result.status == "completed"
+    assert result.status == "generated"
     assert result.memo is not None
-    assert result.memo.memo_title == "Acme update"
+    assert result.memo.company_overview.startswith("Acme")
     assert len(result.evidence.citations) == 2
     assert [citation.citation_id for citation in result.evidence.citations] == ["C1", "C2"]
 
@@ -112,16 +116,20 @@ def test_generate_memo_rejects_unknown_citation_ids(
     fake_provider = FakeLLMProvider(
         {
             MemoDraft: MemoDraft(
-                memo_title="Bad memo",
-                executive_summary="Uses invalid citation.",
-                sections=[
-                    MemoSection(
-                        heading="Section",
-                        body="Unsupported evidence.",
-                        citation_ids=["C3"],
-                    )
-                ],
-                key_takeaways=[],
+                company_overview="Overview",
+                key_developments=["One development."],
+                risks=["One risk."],
+                catalysts=["One catalyst."],
+                kpis=["One KPI."],
+                open_questions=["One question."],
+                citations_by_section=MemoCitationsBySection(
+                    company_overview=["C3"],
+                    key_developments=["C3"],
+                    risks=["C3"],
+                    catalysts=["C3"],
+                    kpis=["C3"],
+                    open_questions=["C3"],
+                ),
             )
         }
     )
