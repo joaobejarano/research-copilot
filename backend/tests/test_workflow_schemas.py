@@ -53,11 +53,9 @@ def test_workflow_evidence_respects_max_citations() -> None:
 def test_timeline_output_forbids_more_than_max_items() -> None:
     oversized_events = [
         {
-            "date_label": f"2024-Q{index + 1}",
-            "event_title": f"Event {index + 1}",
-            "description": "description",
-            "significance": "significance",
-            "citation_ids": ["C1"],
+            "event_date_or_period": f"2024-Q{index + 1}",
+            "event_summary": "summary",
+            "citation": "C1",
         }
         for index in range(MAX_WORKFLOW_ITEMS + 1)
     ]

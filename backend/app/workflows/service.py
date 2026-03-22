@@ -124,7 +124,7 @@ class StructuredWorkflowService:
             response_model=KPIDraft,
         )
         self._validate_citation_ids(
-            citation_ids=[citation_id for kpi in draft.kpis for citation_id in kpi.citation_ids],
+            citation_ids=[kpi.citation for kpi in draft.kpis],
             evidence=context.evidence,
         )
 
@@ -161,11 +161,7 @@ class StructuredWorkflowService:
             response_model=RiskDraft,
         )
         self._validate_citation_ids(
-            citation_ids=[
-                citation_id
-                for risk in draft.risks
-                for citation_id in risk.citation_ids
-            ],
+            citation_ids=[risk.citation for risk in draft.risks],
             evidence=context.evidence,
         )
 
@@ -202,11 +198,7 @@ class StructuredWorkflowService:
             response_model=TimelineDraft,
         )
         self._validate_citation_ids(
-            citation_ids=[
-                citation_id
-                for event in draft.events
-                for citation_id in event.citation_ids
-            ],
+            citation_ids=[event.citation for event in draft.events],
             evidence=context.evidence,
         )
 
@@ -281,7 +273,7 @@ class StructuredWorkflowService:
             f"Instruction: {context.instruction}\n"
             f"Max items: {self.max_workflow_items}\n"
             f"Max citations: {self.max_workflow_citations}\n"
-            "Use citation_ids exactly as provided below.\n\n"
+            "Use citation identifiers exactly as provided below.\n\n"
             f"{context.prompt_context}"
         )
 

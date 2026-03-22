@@ -34,12 +34,6 @@ class WorkflowEvidence(BaseModel):
     model_config = STRICT_MODEL_CONFIG
 
 
-class CitationBackedItem(BaseModel):
-    citation_ids: list[str] = Field(min_length=1, max_length=MAX_WORKFLOW_CITATIONS)
-
-    model_config = STRICT_MODEL_CONFIG
-
-
 class BaseWorkflowRequest(BaseModel):
     document_id: int = Field(ge=1)
     instruction: str = Field(min_length=1, max_length=800)
@@ -86,13 +80,14 @@ class MemoGenerationOutput(BaseModel):
     model_config = STRICT_MODEL_CONFIG
 
 
-class KPIItem(CitationBackedItem):
+class KPIItem(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     value: str = Field(min_length=1, max_length=200)
     unit: str | None = Field(default=None, max_length=50)
     period: str | None = Field(default=None, max_length=120)
-    direction: Literal["up", "down", "flat", "unknown"] = "unknown"
-    commentary: str = Field(min_length=1, max_length=1200)
+    citation: str = Field(pattern=r"^C[1-9][0-9]*$")
+
+    model_config = STRICT_MODEL_CONFIG
 
 
 class KPIDraft(BaseModel):
@@ -115,12 +110,13 @@ class KPIExtractionOutput(BaseModel):
     model_config = STRICT_MODEL_CONFIG
 
 
-class RiskItem(CitationBackedItem):
-    risk_title: str = Field(min_length=1, max_length=240)
-    severity: Literal["low", "medium", "high", "critical", "unknown"] = "unknown"
-    horizon: Literal["short_term", "medium_term", "long_term", "unknown"] = "unknown"
+class RiskItem(BaseModel):
+    title: str = Field(min_length=1, max_length=240)
     description: str = Field(min_length=1, max_length=1400)
-    potential_impact: str = Field(min_length=1, max_length=1400)
+    severity_or_materiality: Literal["low", "medium", "high", "critical", "unknown"] = "unknown"
+    citation: str = Field(pattern=r"^C[1-9][0-9]*$")
+
+    model_config = STRICT_MODEL_CONFIG
 
 
 class RiskDraft(BaseModel):
@@ -143,11 +139,12 @@ class RiskExtractionOutput(BaseModel):
     model_config = STRICT_MODEL_CONFIG
 
 
-class TimelineEvent(CitationBackedItem):
-    date_label: str = Field(min_length=1, max_length=120)
-    event_title: str = Field(min_length=1, max_length=240)
-    description: str = Field(min_length=1, max_length=1200)
-    significance: str = Field(min_length=1, max_length=1200)
+class TimelineEvent(BaseModel):
+    event_date_or_period: str = Field(min_length=1, max_length=120)
+    event_summary: str = Field(min_length=1, max_length=1200)
+    citation: str = Field(pattern=r"^C[1-9][0-9]*$")
+
+    model_config = STRICT_MODEL_CONFIG
 
 
 class TimelineDraft(BaseModel):

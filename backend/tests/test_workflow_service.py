@@ -157,9 +157,7 @@ def test_extract_kpis_returns_completed_output(monkeypatch: pytest.MonkeyPatch) 
                         value="120M",
                         unit="USD",
                         period="2024-Q4",
-                        direction="up",
-                        commentary="Revenue increased.",
-                        citation_ids=["C1"],
+                        citation="C1",
                     )
                 ]
             )
@@ -188,12 +186,10 @@ def test_extract_risks_returns_completed_output(monkeypatch: pytest.MonkeyPatch)
             RiskDraft: RiskDraft(
                 risks=[
                     RiskItem(
-                        risk_title="FX volatility",
-                        severity="medium",
-                        horizon="short_term",
+                        title="FX volatility",
                         description="Currency movements can pressure earnings.",
-                        potential_impact="Margin pressure in export-heavy units.",
-                        citation_ids=["C1"],
+                        severity_or_materiality="medium",
+                        citation="C1",
                     )
                 ]
             )
@@ -213,7 +209,7 @@ def test_extract_risks_returns_completed_output(monkeypatch: pytest.MonkeyPatch)
 
     assert result.status == "completed"
     assert len(result.risks) == 1
-    assert result.risks[0].risk_title == "FX volatility"
+    assert result.risks[0].title == "FX volatility"
 
 
 def test_build_timeline_returns_completed_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -222,11 +218,9 @@ def test_build_timeline_returns_completed_output(monkeypatch: pytest.MonkeyPatch
             TimelineDraft: TimelineDraft(
                 events=[
                     TimelineEvent(
-                        date_label="2024-Q4",
-                        event_title="Revenue rebound",
-                        description="Revenue grew after prior slowdown.",
-                        significance="Signals demand recovery.",
-                        citation_ids=["C1"],
+                        event_date_or_period="2024-Q4",
+                        event_summary="Revenue rebounded after prior slowdown.",
+                        citation="C1",
                     )
                 ]
             )
@@ -246,4 +240,4 @@ def test_build_timeline_returns_completed_output(monkeypatch: pytest.MonkeyPatch
 
     assert result.status == "completed"
     assert len(result.events) == 1
-    assert result.events[0].event_title == "Revenue rebound"
+    assert result.events[0].event_date_or_period == "2024-Q4"

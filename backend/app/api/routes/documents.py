@@ -20,7 +20,16 @@ from app.db.models.document_chunk import DocumentChunk
 from app.ingestion.processing import process_uploaded_document
 from app.qa.service import answer_document_question
 from app.retrieval.service import retrieve_relevant_chunks
-from app.workflows.schemas import MemoDraft, MemoGenerationRequest
+from app.workflows.schemas import (
+    KPIExtractionOutput,
+    KPIExtractionRequest,
+    MemoDraft,
+    MemoGenerationRequest,
+    RiskExtractionOutput,
+    RiskExtractionRequest,
+    TimelineBuildingOutput,
+    TimelineBuildingRequest,
+)
 from app.workflows.service import StructuredWorkflowService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -30,6 +39,18 @@ WRITE_CHUNK_SIZE = 1024 * 1024
 DEFAULT_MEMO_INSTRUCTION = (
     "Generate a grounded investment memo with sections for company_overview, "
     "key_developments, risks, catalysts, kpis, and open_questions."
+)
+DEFAULT_KPI_INSTRUCTION = (
+    "Extract the most decision-relevant KPIs from the document. "
+    "Each KPI must include name, value, optional unit, optional period, and one citation."
+)
+DEFAULT_RISK_INSTRUCTION = (
+    "Extract material risks from the document. "
+    "Each risk must include title, description, severity_or_materiality, and one citation."
+)
+DEFAULT_TIMELINE_INSTRUCTION = (
+    "Build a concise timeline of important events from the document. "
+    "Each event must include event_date_or_period, event_summary, and one citation."
 )
 
 
@@ -123,6 +144,24 @@ class DocumentMemoResponse(BaseModel):
     document_id: int
     status: Literal["generated", "insufficient_evidence"]
     memo: MemoDraft | None
+
+
+class DocumentKPIRequest(BaseModel):
+    instruction: str = Field(default=DEFAULT_KPI_INSTRUCTION, min_length=1, max_length=800)
+    top_k: int | None = Field(default=None, ge=1)
+    min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+
+class DocumentRiskRequest(BaseModel):
+    instruction: str = Field(default=DEFAULT_RISK_INSTRUCTION, min_length=1, max_length=800)
+    top_k: int | None = Field(default=None, ge=1)
+    min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+
+class DocumentTimelineRequest(BaseModel):
+    instruction: str = Field(default=DEFAULT_TIMELINE_INSTRUCTION, min_length=1, max_length=800)
+    top_k: int | None = Field(default=None, ge=1)
+    min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
 
 
 def get_structured_workflow_service() -> StructuredWorkflowService:
@@ -360,6 +399,129 @@ async def generate_document_memo(
         status=result.status,
         memo=result.memo,
     )
+
+
+@router.post("/{document_id}/extract/kpis", response_model=KPIExtractionOutput)
+async def extract_document_kpis(
+    document_id: int,
+    payload: DocumentKPIRequest | None = None,
+    db: Session = Depends(get_db),
+) -> KPIExtractionOutput:
+    normalized_payload = payload or DocumentKPIRequest()
+
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if document.status != "ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be processed and ready before KPI extraction.",
+        )
+
+    try:
+        workflow_service = get_structured_workflow_service()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"KPI extraction is not configured: {exc}",
+        ) from exc
+
+    try:
+        return workflow_service.extract_kpis(
+            db=db,
+            request=KPIExtractionRequest(
+                document_id=document_id,
+                instruction=normalized_payload.instruction,
+                top_k=normalized_payload.top_k,
+                min_similarity=normalized_payload.min_similarity,
+            ),
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail.endswith("was not found.") else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+@router.post("/{document_id}/extract/risks", response_model=RiskExtractionOutput)
+async def extract_document_risks(
+    document_id: int,
+    payload: DocumentRiskRequest | None = None,
+    db: Session = Depends(get_db),
+) -> RiskExtractionOutput:
+    normalized_payload = payload or DocumentRiskRequest()
+
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if document.status != "ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be processed and ready before risk extraction.",
+        )
+
+    try:
+        workflow_service = get_structured_workflow_service()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Risk extraction is not configured: {exc}",
+        ) from exc
+
+    try:
+        return workflow_service.extract_risks(
+            db=db,
+            request=RiskExtractionRequest(
+                document_id=document_id,
+                instruction=normalized_payload.instruction,
+                top_k=normalized_payload.top_k,
+                min_similarity=normalized_payload.min_similarity,
+            ),
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail.endswith("was not found.") else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+@router.post("/{document_id}/timeline", response_model=TimelineBuildingOutput)
+async def build_document_timeline(
+    document_id: int,
+    payload: DocumentTimelineRequest | None = None,
+    db: Session = Depends(get_db),
+) -> TimelineBuildingOutput:
+    normalized_payload = payload or DocumentTimelineRequest()
+
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if document.status != "ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be processed and ready before timeline building.",
+        )
+
+    try:
+        workflow_service = get_structured_workflow_service()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Timeline building is not configured: {exc}",
+        ) from exc
+
+    try:
+        return workflow_service.build_timeline(
+            db=db,
+            request=TimelineBuildingRequest(
+                document_id=document_id,
+                instruction=normalized_payload.instruction,
+                top_k=normalized_payload.top_k,
+                min_similarity=normalized_payload.min_similarity,
+            ),
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail.endswith("was not found.") else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
