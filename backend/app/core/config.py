@@ -10,6 +10,14 @@ PROJECT_ROOT = MODULE_PATH.parents[3]
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(BACKEND_ROOT / ".env")
 
+
+def _get_bool_env(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
 APP_NAME = os.getenv("RESEARCH_COPILOT_APP_NAME", "Research Copilot API")
 
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
@@ -47,3 +55,8 @@ LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 MAX_WORKFLOW_CITATIONS = int(os.getenv("MAX_WORKFLOW_CITATIONS", "6"))
 MAX_WORKFLOW_ITEMS = int(os.getenv("MAX_WORKFLOW_ITEMS", "10"))
+
+CONFIDENCE_PASS_THRESHOLD = float(os.getenv("CONFIDENCE_PASS_THRESHOLD", "0.75"))
+CONFIDENCE_REVIEW_THRESHOLD = float(os.getenv("CONFIDENCE_REVIEW_THRESHOLD", "0.50"))
+ENABLE_CONFIDENCE_GATING = _get_bool_env("ENABLE_CONFIDENCE_GATING", True)
+MAX_AGENT_TOOL_CALLS = int(os.getenv("MAX_AGENT_TOOL_CALLS", "20"))
