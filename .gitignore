@@ -16,3 +16,4 @@ storage/
 scratch/
 bnp research.pdf:Zone.Identifier
 bnp research.pdf
+.env.local
