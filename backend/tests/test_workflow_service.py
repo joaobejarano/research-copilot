@@ -1,0 +1,241 @@
+from typing import Any
+
+import pytest
+
+from app.retrieval.service import RetrievedChunk
+from app.workflows import service as workflow_service
+from app.workflows.schemas import (
+    KPIDraft,
+    KPIExtractionRequest,
+    KPIItem,
+    MemoDraft,
+    MemoGenerationRequest,
+    MemoSection,
+    RiskDraft,
+    RiskExtractionRequest,
+    RiskItem,
+    TimelineBuildingRequest,
+    TimelineDraft,
+    TimelineEvent,
+)
+from app.workflows.service import StructuredWorkflowService
+
+
+class FakeLLMProvider:
+    def __init__(self, responses: dict[type[Any], Any]) -> None:
+        self.responses = responses
+        self.calls: list[type[Any]] = []
+
+    def generate_structured_output(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: type[Any],
+    ) -> Any:
+        self.calls.append(response_model)
+        return self.responses[response_model]
+
+
+def _chunk(index: int, text: str, similarity: float = 0.8) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_index=index,
+        page_number=1,
+        text=text,
+        token_count=12,
+        similarity=similarity,
+    )
+
+
+def test_generate_memo_returns_insufficient_evidence_when_no_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_provider = FakeLLMProvider({})
+    service = StructuredWorkflowService(llm_provider=fake_provider)
+    monkeypatch.setattr(workflow_service, "retrieve_relevant_chunks", lambda **_: [])
+
+    result = service.generate_memo(
+        db=None,  # type: ignore[arg-type]
+        request=MemoGenerationRequest(
+            document_id=1,
+            instruction="Create a short memo.",
+        ),
+    )
+
+    assert result.status == "insufficient_evidence"
+    assert result.memo is None
+    assert result.evidence.citations == []
+    assert fake_provider.calls == []
+
+
+def test_generate_memo_returns_completed_with_retrieved_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_provider = FakeLLMProvider(
+        {
+            MemoDraft: MemoDraft(
+                memo_title="Acme update",
+                executive_summary="Performance improved.",
+                sections=[
+                    MemoSection(
+                        heading="Revenue",
+                        body="Revenue grew in Q4.",
+                        citation_ids=["C1"],
+                    )
+                ],
+                key_takeaways=["Growth improved."],
+            )
+        }
+    )
+    service = StructuredWorkflowService(llm_provider=fake_provider, max_workflow_citations=2)
+    monkeypatch.setattr(
+        workflow_service,
+        "retrieve_relevant_chunks",
+        lambda **_: [_chunk(0, "Revenue grew in Q4."), _chunk(1, "Margins were stable.")],
+    )
+
+    result = service.generate_memo(
+        db=None,  # type: ignore[arg-type]
+        request=MemoGenerationRequest(document_id=42, instruction="Generate memo"),
+    )
+
+    assert result.status == "completed"
+    assert result.memo is not None
+    assert result.memo.memo_title == "Acme update"
+    assert len(result.evidence.citations) == 2
+    assert [citation.citation_id for citation in result.evidence.citations] == ["C1", "C2"]
+
+
+def test_generate_memo_rejects_unknown_citation_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_provider = FakeLLMProvider(
+        {
+            MemoDraft: MemoDraft(
+                memo_title="Bad memo",
+                executive_summary="Uses invalid citation.",
+                sections=[
+                    MemoSection(
+                        heading="Section",
+                        body="Unsupported evidence.",
+                        citation_ids=["C3"],
+                    )
+                ],
+                key_takeaways=[],
+            )
+        }
+    )
+    service = StructuredWorkflowService(llm_provider=fake_provider, max_workflow_citations=1)
+    monkeypatch.setattr(
+        workflow_service,
+        "retrieve_relevant_chunks",
+        lambda **_: [_chunk(0, "Only one chunk.")],
+    )
+
+    with pytest.raises(ValueError, match="unknown citation_id"):
+        service.generate_memo(
+            db=None,  # type: ignore[arg-type]
+            request=MemoGenerationRequest(document_id=1, instruction="Generate memo"),
+        )
+
+
+def test_extract_kpis_returns_completed_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_provider = FakeLLMProvider(
+        {
+            KPIDraft: KPIDraft(
+                kpis=[
+                    KPIItem(
+                        name="Revenue",
+                        value="120M",
+                        unit="USD",
+                        period="2024-Q4",
+                        direction="up",
+                        commentary="Revenue increased.",
+                        citation_ids=["C1"],
+                    )
+                ]
+            )
+        }
+    )
+    service = StructuredWorkflowService(llm_provider=fake_provider)
+    monkeypatch.setattr(
+        workflow_service,
+        "retrieve_relevant_chunks",
+        lambda **_: [_chunk(0, "Revenue increased to 120M in Q4.")],
+    )
+
+    result = service.extract_kpis(
+        db=None,  # type: ignore[arg-type]
+        request=KPIExtractionRequest(document_id=9, instruction="Extract key KPIs."),
+    )
+
+    assert result.status == "completed"
+    assert len(result.kpis) == 1
+    assert result.kpis[0].name == "Revenue"
+
+
+def test_extract_risks_returns_completed_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_provider = FakeLLMProvider(
+        {
+            RiskDraft: RiskDraft(
+                risks=[
+                    RiskItem(
+                        risk_title="FX volatility",
+                        severity="medium",
+                        horizon="short_term",
+                        description="Currency movements can pressure earnings.",
+                        potential_impact="Margin pressure in export-heavy units.",
+                        citation_ids=["C1"],
+                    )
+                ]
+            )
+        }
+    )
+    service = StructuredWorkflowService(llm_provider=fake_provider)
+    monkeypatch.setattr(
+        workflow_service,
+        "retrieve_relevant_chunks",
+        lambda **_: [_chunk(0, "FX swings were highlighted as a near-term risk.")],
+    )
+
+    result = service.extract_risks(
+        db=None,  # type: ignore[arg-type]
+        request=RiskExtractionRequest(document_id=11, instruction="Extract key risks."),
+    )
+
+    assert result.status == "completed"
+    assert len(result.risks) == 1
+    assert result.risks[0].risk_title == "FX volatility"
+
+
+def test_build_timeline_returns_completed_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_provider = FakeLLMProvider(
+        {
+            TimelineDraft: TimelineDraft(
+                events=[
+                    TimelineEvent(
+                        date_label="2024-Q4",
+                        event_title="Revenue rebound",
+                        description="Revenue grew after prior slowdown.",
+                        significance="Signals demand recovery.",
+                        citation_ids=["C1"],
+                    )
+                ]
+            )
+        }
+    )
+    service = StructuredWorkflowService(llm_provider=fake_provider)
+    monkeypatch.setattr(
+        workflow_service,
+        "retrieve_relevant_chunks",
+        lambda **_: [_chunk(0, "Q4 showed a clear revenue rebound.")],
+    )
+
+    result = service.build_timeline(
+        db=None,  # type: ignore[arg-type]
+        request=TimelineBuildingRequest(document_id=13, instruction="Build a timeline."),
+    )
+
+    assert result.status == "completed"
+    assert len(result.events) == 1
+    assert result.events[0].event_title == "Revenue rebound"
