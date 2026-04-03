@@ -91,3 +91,12 @@ class AgentExecutionTrace(BaseModel):
     gate_decision: GateDecision | None = None
 
     model_config = RELIABILITY_MODEL_CONFIG
+
+
+class ReliabilityAssessment(BaseModel):
+    verification: VerificationOutcome
+    confidence: ConfidenceResult
+    gate_decision: GateDecision
+    issues: list[str] = Field(default_factory=list, max_length=200)
+
+    model_config = RELIABILITY_MODEL_CONFIG

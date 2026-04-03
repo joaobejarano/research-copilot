@@ -19,6 +19,8 @@ from app.db.models.document import Document
 from app.db.models.document_chunk import DocumentChunk
 from app.ingestion.processing import process_uploaded_document
 from app.qa.service import answer_document_question
+from app.reliability.grounded import GroundedAskReliabilityEvaluator
+from app.reliability.schemas import ConfidenceResult, GateDecision, VerificationOutcome
 from app.retrieval.service import retrieve_relevant_chunks
 from app.workflows.schemas import (
     KPIExtractionOutput,
@@ -134,6 +136,17 @@ class DocumentAskResponse(BaseModel):
     citations: list[DocumentCitationResponse]
 
 
+class DocumentVerifyAskResponse(BaseModel):
+    question: str
+    answer: str
+    status: str
+    citations: list[DocumentCitationResponse]
+    verification: VerificationOutcome
+    confidence: ConfidenceResult
+    gate_decision: GateDecision
+    issues: list[str]
+
+
 class DocumentMemoRequest(BaseModel):
     instruction: str = Field(default=DEFAULT_MEMO_INSTRUCTION, min_length=1, max_length=800)
     top_k: int | None = Field(default=None, ge=1)
@@ -166,6 +179,10 @@ class DocumentTimelineRequest(BaseModel):
 
 def get_structured_workflow_service() -> StructuredWorkflowService:
     return StructuredWorkflowService()
+
+
+def get_grounded_ask_reliability_evaluator() -> GroundedAskReliabilityEvaluator:
+    return GroundedAskReliabilityEvaluator()
 
 
 def _sanitize_path_component(value: str) -> str:
@@ -351,6 +368,64 @@ async def ask_document_question(
             )
             for citation in result.citations
         ],
+    )
+
+
+@router.post("/{document_id}/verify/ask", response_model=DocumentVerifyAskResponse)
+async def verify_document_question(
+    document_id: int,
+    payload: DocumentAskRequest,
+    db: Session = Depends(get_db),
+) -> DocumentVerifyAskResponse:
+    top_k = payload.top_k if payload.top_k is not None else RETRIEVAL_TOP_K
+    min_similarity = (
+        payload.min_similarity
+        if payload.min_similarity is not None
+        else RETRIEVAL_MIN_SIMILARITY
+    )
+
+    try:
+        ask_result = answer_document_question(
+            db=db,
+            document_id=document_id,
+            question=payload.question,
+            top_k=top_k,
+            min_similarity=min_similarity,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail.endswith("was not found.") else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    evaluator = get_grounded_ask_reliability_evaluator()
+    reliability_result = evaluator.evaluate(
+        db=db,
+        document_id=document_id,
+        answer=ask_result.answer,
+        citations=ask_result.citations,
+    )
+    assessment = reliability_result.assessment
+
+    return DocumentVerifyAskResponse(
+        question=ask_result.question,
+        answer=ask_result.answer,
+        status=ask_result.status,
+        citations=[
+            DocumentCitationResponse(
+                citation_id=citation.citation_id,
+                rank=citation.rank,
+                document_id=citation.document_id,
+                chunk_index=citation.chunk_index,
+                page_number=citation.page_number,
+                text_excerpt=citation.text_excerpt,
+                retrieval_score=citation.retrieval_score,
+            )
+            for citation in ask_result.citations
+        ],
+        verification=assessment.verification,
+        confidence=assessment.confidence,
+        gate_decision=assessment.gate_decision,
+        issues=assessment.issues,
     )
 
 
