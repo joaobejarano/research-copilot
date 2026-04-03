@@ -1,7 +1,7 @@
 {
   "dataset_id": "stage7_seed_cases",
-  "version": "2.0.0",
-  "description": "Stage 7 practical eval cases that execute existing grounded research workflows.",
+  "version": "2.1.0",
+  "description": "Stage 7 practical local benchmark for grounded research workflows using seeded document fixtures.",
   "document_fixtures": [
     {
       "reference_id": "acme_financial_report_2024_q4",
@@ -28,109 +28,257 @@
   ],
   "cases": [
     {
-      "id": "ask_revenue_q4",
+      "id": "ask_revenue_q4_answered",
       "workflow_type": "ask",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4"
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Fixture: acme_q4_report.txt seeded from dataset document_fixtures."
       },
       "input": {
         "question": "What happened to revenue in Q4?",
         "top_k": 5,
         "min_similarity": 0.2
       },
-      "expected_behavior": "Returns a grounded answer with citations when supporting chunks exist.",
-      "expected_fields": [
-        "question",
-        "answer",
-        "status",
-        "citations"
-      ],
+      "expected_behavior": "Returns grounded answer with citations for revenue question.",
+      "expected_fields": ["question", "answer", "status", "citations"],
       "expected_status": "answered",
       "expected_abstention": false
     },
     {
-      "id": "memo_q4",
+      "id": "ask_management_risk_answered",
+      "workflow_type": "ask",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Checks grounded risk answer against chunk 0."
+      },
+      "input": {
+        "question": "What risk did management highlight?",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Returns grounded answer with citation-backed risk detail.",
+      "expected_fields": ["question", "answer", "status", "citations"],
+      "expected_status": "answered",
+      "expected_abstention": false
+    },
+    {
+      "id": "ask_product_launch_answered",
+      "workflow_type": "ask",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Checks date/event retrieval from chunk 0."
+      },
+      "input": {
+        "question": "When was Product X launched?",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Returns grounded answer for product launch event.",
+      "expected_fields": ["question", "answer", "status", "citations"],
+      "expected_status": "answered",
+      "expected_abstention": false
+    },
+    {
+      "id": "ask_subscription_renewals_answered",
+      "workflow_type": "ask",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Checks supporting text from chunk 1."
+      },
+      "input": {
+        "question": "What changed in subscription renewals?",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Returns grounded answer for renewals trend.",
+      "expected_fields": ["question", "answer", "status", "citations"],
+      "expected_status": "answered",
+      "expected_abstention": false
+    },
+    {
+      "id": "ask_litigation_reserve_insufficient",
+      "workflow_type": "ask",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Negative case: unsupported topic not present in fixture chunks."
+      },
+      "input": {
+        "question": "What was litigation reserve guidance?",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Should abstain with insufficient evidence for unsupported topic.",
+      "expected_fields": ["question", "answer", "status", "citations"],
+      "expected_status": "insufficient_evidence",
+      "expected_abstention": true
+    },
+    {
+      "id": "ask_dividends_insufficient",
+      "workflow_type": "ask",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Negative case: board/dividends absent from fixture chunks."
+      },
+      "input": {
+        "question": "What did the board say about dividends?",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Should abstain because dividends are not in the document fixture.",
+      "expected_fields": ["question", "answer", "status", "citations"],
+      "expected_status": "insufficient_evidence",
+      "expected_abstention": true
+    },
+    {
+      "id": "ask_carbon_emissions_insufficient",
+      "workflow_type": "ask",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Negative case: ESG emissions content not provided in chunks."
+      },
+      "input": {
+        "question": "How did carbon emissions change year over year?",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Should abstain for missing emissions evidence.",
+      "expected_fields": ["question", "answer", "status", "citations"],
+      "expected_status": "insufficient_evidence",
+      "expected_abstention": true
+    },
+    {
+      "id": "memo_q4_success_primary",
       "workflow_type": "memo",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4"
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Memo benchmark using primary instruction."
       },
       "input": {
         "instruction": "Generate a grounded investment memo for this quarter.",
         "top_k": 5,
         "min_similarity": 0.2
       },
-      "expected_behavior": "Returns generated memo with evidence citations.",
-      "expected_fields": [
-        "document_id",
-        "status",
-        "memo"
-      ],
+      "expected_behavior": "Returns generated memo with citations by section.",
+      "expected_fields": ["document_id", "status", "memo"],
       "expected_status": "generated",
       "expected_abstention": false
     },
     {
-      "id": "extract_kpis_q4",
+      "id": "memo_q4_success_risk_focus",
+      "workflow_type": "memo",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Memo benchmark with risk-oriented instruction variant."
+      },
+      "input": {
+        "instruction": "Draft a grounded memo emphasizing developments, risks, and catalysts.",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Returns generated memo when evidence is available.",
+      "expected_fields": ["document_id", "status", "memo"],
+      "expected_status": "generated",
+      "expected_abstention": false
+    },
+    {
+      "id": "extract_kpis_q4_success_primary",
       "workflow_type": "extract_kpis",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4"
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "KPI benchmark for baseline instruction."
       },
       "input": {
         "instruction": "Extract the most decision-relevant KPIs.",
         "top_k": 5,
         "min_similarity": 0.2
       },
-      "expected_behavior": "Returns KPI list with citation-backed evidence.",
-      "expected_fields": [
-        "workflow",
-        "document_id",
-        "status",
-        "kpis",
-        "evidence"
-      ],
+      "expected_behavior": "Returns completed KPI output with evidence.",
+      "expected_fields": ["workflow", "document_id", "status", "kpis", "evidence"],
       "expected_status": "completed",
       "expected_abstention": false
     },
     {
-      "id": "extract_risks_q4",
+      "id": "extract_kpis_q4_success_margin_focus",
+      "workflow_type": "extract_kpis",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "KPI benchmark with margin and growth emphasis."
+      },
+      "input": {
+        "instruction": "Extract KPIs for revenue growth and margin quality.",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Returns completed KPI output under alternate prompt wording.",
+      "expected_fields": ["workflow", "document_id", "status", "kpis", "evidence"],
+      "expected_status": "completed",
+      "expected_abstention": false
+    },
+    {
+      "id": "extract_risks_q4_success_primary",
       "workflow_type": "extract_risks",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4"
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Risk benchmark baseline instruction."
       },
       "input": {
         "instruction": "Extract material risks and severity.",
         "top_k": 5,
         "min_similarity": 0.2
       },
-      "expected_behavior": "Returns risk list with citation-backed evidence.",
-      "expected_fields": [
-        "workflow",
-        "document_id",
-        "status",
-        "risks",
-        "evidence"
-      ],
+      "expected_behavior": "Returns completed risk extraction with evidence.",
+      "expected_fields": ["workflow", "document_id", "status", "risks", "evidence"],
       "expected_status": "completed",
       "expected_abstention": false
     },
     {
-      "id": "timeline_q4",
+      "id": "extract_risks_q4_success_fx_focus",
+      "workflow_type": "extract_risks",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Risk benchmark with FX-focused wording."
+      },
+      "input": {
+        "instruction": "Identify downside risks with emphasis on FX exposure.",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Returns completed risk extraction for alternate instruction.",
+      "expected_fields": ["workflow", "document_id", "status", "risks", "evidence"],
+      "expected_status": "completed",
+      "expected_abstention": false
+    },
+    {
+      "id": "timeline_q4_success_primary",
       "workflow_type": "timeline",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4"
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Timeline benchmark baseline instruction."
       },
       "input": {
         "instruction": "Build a concise timeline of key events.",
         "top_k": 5,
         "min_similarity": 0.2
       },
-      "expected_behavior": "Returns timeline events with citation-backed evidence.",
-      "expected_fields": [
-        "workflow",
-        "document_id",
-        "status",
-        "events",
-        "evidence"
-      ],
+      "expected_behavior": "Returns completed timeline output with evidence.",
+      "expected_fields": ["workflow", "document_id", "status", "events", "evidence"],
+      "expected_status": "completed",
+      "expected_abstention": false
+    },
+    {
+      "id": "timeline_q4_success_launch_focus",
+      "workflow_type": "timeline",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "notes": "Timeline benchmark with launch milestone emphasis."
+      },
+      "input": {
+        "instruction": "Build a timeline emphasizing launch milestones and quarter events.",
+        "top_k": 5,
+        "min_similarity": 0.2
+      },
+      "expected_behavior": "Returns completed timeline under alternate instruction wording.",
+      "expected_fields": ["workflow", "document_id", "status", "events", "evidence"],
       "expected_status": "completed",
       "expected_abstention": false
     }

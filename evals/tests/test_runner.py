@@ -15,9 +15,34 @@ def test_load_seed_dataset_is_valid() -> None:
     dataset = load_dataset(SEED_DATASET_PATH)
 
     assert dataset.dataset_id == "stage7_seed_cases"
-    assert dataset.version == "2.0.0"
+    assert dataset.version == "2.1.0"
     assert len(dataset.document_fixtures) == 1
-    assert len(dataset.cases) == 5
+    assert len(dataset.cases) == 15
+
+    case_counts_by_workflow: dict[str, int] = {}
+    case_counts_by_status: dict[str, int] = {}
+    for case in dataset.cases:
+        case_counts_by_workflow[case.workflow_type] = (
+            case_counts_by_workflow.get(case.workflow_type, 0) + 1
+        )
+        if case.expected_status is not None:
+            case_counts_by_status[case.expected_status] = (
+                case_counts_by_status.get(case.expected_status, 0) + 1
+            )
+
+    assert case_counts_by_workflow == {
+        "ask": 7,
+        "memo": 2,
+        "extract_kpis": 2,
+        "extract_risks": 2,
+        "timeline": 2,
+    }
+    assert case_counts_by_status == {
+        "answered": 4,
+        "insufficient_evidence": 3,
+        "generated": 2,
+        "completed": 6,
+    }
 
 
 def test_run_eval_dataset_reports_metrics_for_all_cases() -> None:
@@ -26,8 +51,8 @@ def test_run_eval_dataset_reports_metrics_for_all_cases() -> None:
     report = run_eval_dataset(dataset)
 
     assert report.dataset_id == "stage7_seed_cases"
-    assert report.summary.total_cases == 5
-    assert report.summary.passed_cases == 5
+    assert report.summary.total_cases == len(dataset.cases)
+    assert report.summary.passed_cases == len(dataset.cases)
     assert report.summary.failed_cases == 0
 
     required_metric_keys = {
@@ -50,7 +75,7 @@ def test_run_eval_dataset_fails_when_expected_status_is_wrong() -> None:
 
     report = run_eval_dataset(modified_dataset)
 
-    assert report.summary.total_cases == 5
+    assert report.summary.total_cases == len(modified_dataset.cases)
     assert report.summary.failed_cases >= 1
     failing_case = next(result for result in report.results if result.case_id == first_case.id)
     assert failing_case.pass_fail == "fail"
@@ -71,7 +96,7 @@ def test_write_reports_create_json_and_markdown_outputs(tmp_path: Path) -> None:
     markdown_payload = markdown_path.read_text(encoding="utf-8")
 
     assert json_payload["dataset_id"] == "stage7_seed_cases"
-    assert json_payload["summary"]["total_cases"] == 5
-    assert len(json_payload["results"]) == 5
+    assert json_payload["summary"]["total_cases"] == len(dataset.cases)
+    assert len(json_payload["results"]) == len(dataset.cases)
     assert "# Eval Report" in markdown_payload
     assert "| case_id | workflow | status | http |" in markdown_payload
