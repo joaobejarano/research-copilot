@@ -1,24 +1,42 @@
 # Research Copilot
 
-Research Copilot is in Stage 5. Stage 4 provides a minimal analyst dashboard, and Stage 5 adds structured, document-scoped research workflows in the backend.
+Research Copilot is in Stage 6.
 
-## How Stage 5 research workflows work
+Stage 6 adds a backend reliability layer for grounded outputs:
 
-Stage 5 introduces strict JSON workflows that use retrieved chunks from one processed document:
+- citation verification for grounded Q&A
+- confidence scoring and explicit gate decisions
+- one constrained, document-scoped research agent
+- fail-safe output gating (`passed`, `needs_review`, `blocked`)
 
-- `POST /documents/{document_id}/memo`
-- `POST /documents/{document_id}/extract/kpis`
-- `POST /documents/{document_id}/extract/risks`
-- `POST /documents/{document_id}/timeline`
+## How Stage 6 Reliability Works
 
-All outputs are:
+Stage 6 reliability runs in two places:
 
-- document-scoped
-- schema-validated
-- grounded with `evidence.citations`
-- returned as `insufficient_evidence` when context is weak
+1. Grounded Q&A verification
+- `POST /documents/{document_id}/verify/ask`
+- The system validates citation presence, document match, and excerpt grounding.
+- It then computes confidence signals and a gate decision.
 
-## Required environment variables
+2. Constrained research agent
+- `POST /documents/{document_id}/agent`
+- The agent selects from existing tools only:
+  - `ask`
+  - `memo`
+  - `extract_kpis`
+  - `extract_risks`
+  - `build_timeline`
+- The agent records a deterministic trace, computes confidence, decides gate status, and withholds final outputs unless the gate passes.
+
+## Status Meanings
+
+Agent response status is explicit:
+
+- `passed`: verification and confidence checks allow execution; outputs are returned.
+- `needs_review`: confidence is not high enough (or verification is inconclusive); outputs are withheld and reasons are returned.
+- `blocked`: verification failed or execution cannot proceed safely (for example, document not ready); outputs are withheld and reasons are returned.
+
+## Required Environment Variables
 
 Create backend environment:
 
@@ -26,7 +44,14 @@ Create backend environment:
 cp .env.example .env
 ```
 
-Stage 5 backend variables:
+Stage 6 reliability variables:
+
+- `CONFIDENCE_PASS_THRESHOLD` (default: `0.75`)
+- `CONFIDENCE_REVIEW_THRESHOLD` (default: `0.50`)
+- `ENABLE_CONFIDENCE_GATING` (default: `true`)
+- `MAX_AGENT_TOOL_CALLS` (default: `20`)
+
+Also required for workflows/LLM:
 
 - `OPENAI_API_KEY`
 - `LLM_PROVIDER` (default: `openai`)
@@ -50,87 +75,80 @@ If you run the Stage 4 frontend dashboard:
 
 - `NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`
 
-## Run backend (and optional frontend)
+## Run Backend
 
 1. Install backend dependencies:
+
 ```bash
 cd backend
 python -m pip install -r requirements-dev.txt
 ```
 
 2. Start local Postgres (if needed):
+
 ```bash
 docker compose -f infra/docker-compose.yml up -d
 ```
 
 3. Start backend:
+
 ```bash
 cd backend
 uvicorn app.main:app --reload
 ```
 
-Optional Stage 4 dashboard:
+API docs: `http://127.0.0.1:8000/docs`
+
+## Use the Verification Endpoint
+
+Verify a grounded answer with reliability assessment:
 
 ```bash
-cd frontend
-npm install
-npm run dev
-```
-
-API docs: `http://127.0.0.1:8000/docs`  
-Dashboard: `http://localhost:3000/documents`
-
-## How to generate a memo
-
-```bash
-curl -X POST "http://127.0.0.1:8000/documents/{document_id}/memo" \
+curl -X POST "http://127.0.0.1:8000/documents/{document_id}/verify/ask" \
   -H "Content-Type: application/json" \
   -d '{
-    "instruction": "Generate a grounded investment memo.",
+    "question": "What happened to revenue in Q4?",
     "top_k": 5,
     "min_similarity": 0.2
   }'
 ```
 
-## How to extract KPIs
+The response includes:
+
+- `verification`
+- `confidence`
+- `gate_decision`
+- `issues`
+
+## Use the Agent Endpoint
+
+Run the constrained agent on one document:
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/documents/{document_id}/extract/kpis" \
+curl -X POST "http://127.0.0.1:8000/documents/{document_id}/agent" \
   -H "Content-Type: application/json" \
   -d '{
-    "instruction": "Extract decision-relevant KPIs.",
+    "instruction": "Extract KPIs and risks, then answer what changed in Q4.",
     "top_k": 5,
     "min_similarity": 0.2
   }'
 ```
 
-## How to extract risks
+The response includes:
 
-```bash
-curl -X POST "http://127.0.0.1:8000/documents/{document_id}/extract/risks" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "instruction": "Extract material risks.",
-    "top_k": 5,
-    "min_similarity": 0.2
-  }'
-```
+- `instruction`
+- `status`
+- `selected_tools`
+- `trace`
+- `outputs`
+- `outputs_withheld`
+- `decision_reasons`
+- `confidence`
+- `gate_decision`
 
-## How to build a timeline
+Note: the document must exist. If it is not `ready`, agent execution is blocked.
 
-```bash
-curl -X POST "http://127.0.0.1:8000/documents/{document_id}/timeline" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "instruction": "Build a timeline of key events.",
-    "top_k": 5,
-    "min_similarity": 0.2
-  }'
-```
-
-Note: document must exist and be `ready` (processed) before these endpoints run.
-
-## How to run tests
+## How to Run Tests
 
 Run all backend tests:
 
@@ -138,8 +156,8 @@ Run all backend tests:
 pytest -q backend/tests
 ```
 
-Run only workflow tests:
+Run reliability-focused tests:
 
 ```bash
-pytest -q backend/tests/test_workflow_*.py backend/tests/test_documents_memo.py backend/tests/test_documents_workflows.py
+pytest -q backend/tests/test_reliability_*.py backend/tests/test_documents_agent.py backend/tests/test_documents_verify_ask.py
 ```

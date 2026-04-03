@@ -1,99 +1,115 @@
-# Stage 5 Architecture Additions
+# Stage 6 Architecture Additions
 
-This document describes only what Stage 5 adds to the backend.
+This document describes only what Stage 6 adds to the backend.
 
-## Scope Added in Stage 5
+## Scope Added in Stage 6
 
-- shared structured workflow service for document-scoped research tasks
-- reusable LLM provider abstraction for strict JSON outputs
-- explicit schemas for:
-  - memo generation
-  - KPI extraction
-  - risk extraction
-  - timeline building
-- shared evidence/citation structures across all workflow outputs
-- document-scoped API endpoints for each workflow
+- reliability schemas for verification, confidence, gating, and agent traces
+- reliability service with explicit threshold-based gate decisions
+- grounded citation verification for Q&A answers
+- constrained research agent orchestration over existing internal tools
+- document-scoped reliability endpoints and responses
 
-Out of scope in Stage 5:
+Out of scope in Stage 6:
 
-- frontend workflow UI
-- agent orchestration
-- workflow persistence
-- cross-document workflows
+- multi-agent orchestration
+- human review UI/workflow execution
+- frontend agent experience
+- MCP/tooling beyond existing internal workflows
 
 ## Backend Components Added
 
-### Workflow schemas (`backend/app/workflows/schemas.py`)
+### Reliability schemas (`backend/app/reliability/schemas.py`)
 
-Defines strict Pydantic models:
+Stage 6 introduces strict models for:
 
-- shared:
-  - `WorkflowCitation`
-  - `WorkflowEvidence`
-  - base request model with `document_id`, `instruction`, retrieval controls
-- memo:
-  - `MemoGenerationRequest`, `MemoDraft`, `MemoGenerationOutput`
-- KPI:
-  - `KPIExtractionRequest`, `KPIItem`, `KPIDraft`, `KPIExtractionOutput`
-- risk:
-  - `RiskExtractionRequest`, `RiskItem`, `RiskDraft`, `RiskExtractionOutput`
-- timeline:
-  - `TimelineBuildingRequest`, `TimelineEvent`, `TimelineDraft`, `TimelineBuildingOutput`
+- verification checks and outcomes (`VerificationCheckResult`, `VerificationOutcome`)
+- confidence signals and result (`ConfidenceSignal`, `ConfidenceResult`)
+- gate thresholds and decisions (`GateThresholds`, `GateDecision`)
+- agent execution trace (`AgentToolCallTrace`, `AgentExecutionTrace`)
+- consolidated assessment (`ReliabilityAssessment`)
 
-### LLM provider abstraction (`backend/app/workflows/llm.py`)
+### Reliability service (`backend/app/reliability/service.py`)
 
-- `StructuredLLMProvider` protocol
-- `OpenAIStructuredLLMProvider` implementation using JSON schema response format
-- provider factory via `get_llm_provider(...)`
+`ReliabilityService` provides explicit, deterministic mechanics:
 
-### Workflow orchestration service (`backend/app/workflows/service.py`)
+- summarize verification checks into `passed`, `inconclusive`, or `failed`
+- compute confidence score/band from weighted signals and verification score
+- decide gate result (`pass`, `review`, `block`) using configured thresholds
+- build and finalize agent traces with per-tool call status
 
-- `StructuredWorkflowService` exposes independent methods:
-  - `generate_memo`
-  - `extract_kpis`
-  - `extract_risks`
-  - `build_timeline`
-- each method:
-  - retrieves evidence chunks for one document
-  - returns `insufficient_evidence` when retrieval is weak
-  - requests strict structured output from LLM
-  - validates cited `C1..Cn` ids against retrieved evidence
+### Grounded evaluator (`backend/app/reliability/grounded.py`)
 
-### API routes (`backend/app/api/routes/documents.py`)
+`GroundedAskReliabilityEvaluator` evaluates grounded Q&A output by checking:
 
-Stage 5 document-scoped endpoints:
+- citation exists in stored chunks
+- citation belongs to the requested document
+- citation excerpt is present in referenced chunk text
+- answer numeric claims are supported by cited chunks
 
-- `POST /documents/{document_id}/memo`
-- `POST /documents/{document_id}/extract/kpis`
-- `POST /documents/{document_id}/extract/risks`
-- `POST /documents/{document_id}/timeline`
+It returns:
 
-Route behavior:
+- verification result
+- confidence result
+- gate decision
+- issues list
 
-- checks document exists
-- requires document status `ready`
-- invokes corresponding workflow method
-- returns strict structured response with evidence
+### Constrained agent (`backend/app/workflows/agent.py`)
 
-## Stage 5 Runtime Flow
+`ConstrainedResearchAgent` is document-scoped and deterministic:
 
-1. Caller sends workflow request for a single `document_id`.
-2. API validates document readiness.
-3. Workflow service retrieves top-k relevant chunks.
-4. Retrieved chunks are normalized into `evidence.citations` (`C1`, `C2`, ...).
-5. LLM returns strict JSON matching workflow schema.
-6. Service validates citations referenced by output items.
-7. API returns structured result with status:
-  - `generated` or `insufficient_evidence` for memo
-  - `completed` or `insufficient_evidence` for KPI/risk/timeline
+- accepts one free-form instruction
+- selects only from allowed tools (`ask`, `memo`, `extract_kpis`, `extract_risks`, `build_timeline`)
+- executes selected tools in deterministic order
+- records full execution trace
+- applies confidence gating before returning outputs
 
-## Test Coverage Added
+## Stage 6 API Additions
 
-- schema validation tests for workflow models
-- service tests for memo/KPI/risk/timeline behavior
-- endpoint tests for:
-  - successful structured output
-  - insufficient evidence handling
-  - `400` when document is not ready
-  - `404` for missing document
-- integration-style workflow tests with real retrieval and mocked LLM
+### `POST /documents/{document_id}/verify/ask`
+
+- runs grounded Q&A plus reliability evaluation
+- returns verification, confidence, gate decision, and issues
+
+### `POST /documents/{document_id}/agent`
+
+- runs constrained agent orchestration for one document
+- returns:
+  - selected tools
+  - execution trace
+  - outputs (withheld unless gate passes)
+  - confidence
+  - gate decision
+  - explicit status (`passed`, `needs_review`, `blocked`)
+
+## Stage 6 Runtime Behavior
+
+### Verification flow
+
+1. Run grounded Q&A for one `document_id`.
+2. Verify citations and grounded excerpts.
+3. Compute confidence signals.
+4. Apply explicit gate decision.
+5. Return verification/confidence/gate details.
+
+### Agent flow
+
+1. Select tools deterministically from instruction.
+2. Execute selected tools within one document scope.
+3. Record per-tool execution trace.
+4. Build verification and confidence results.
+5. Apply gate decision:
+- `passed`: return outputs
+- `needs_review`: withhold outputs and return reasons
+- `blocked`: withhold outputs and return reasons
+
+## Test Coverage Added in Stage 6
+
+- reliability schema and service behavior tests
+- grounded evaluator tests for citation checks and numeric claim support
+- endpoint tests for `/verify/ask`
+- constrained agent endpoint tests for:
+  - passed outcome
+  - needs_review outcome
+  - blocked outcome
+  - deterministic trace behavior
