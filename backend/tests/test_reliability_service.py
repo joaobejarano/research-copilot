@@ -56,6 +56,19 @@ def test_score_confidence_uses_signals_and_verification_score() -> None:
     assert confidence.verification_score == pytest.approx(0.8)
 
 
+def test_score_confidence_uses_verification_score_when_signals_are_empty() -> None:
+    service = ReliabilityService(pass_threshold=0.7, review_threshold=0.4)
+    verification = service.summarize_verification(
+        checks=[_check("citation_presence", True, 0.65, "Coverage is moderate.")]
+    )
+
+    confidence = service.score_confidence(signals=[], verification=verification)
+
+    assert confidence.score == pytest.approx(0.65)
+    assert confidence.band == "review"
+    assert confidence.verification_score == pytest.approx(0.65)
+
+
 def test_decide_gate_blocks_when_verification_failed() -> None:
     service = ReliabilityService(pass_threshold=0.7, review_threshold=0.4)
     verification = service.summarize_verification(
@@ -70,6 +83,46 @@ def test_decide_gate_blocks_when_verification_failed() -> None:
     assert gate.decision == "block"
     assert gate.allow_execution is False
     assert gate.reason == "Verification failed."
+
+
+def test_decide_gate_returns_review_when_verification_is_inconclusive() -> None:
+    service = ReliabilityService(pass_threshold=0.7, review_threshold=0.4)
+    verification = service.summarize_verification(
+        checks=[
+            _check("citation_presence", True, 1.0, "Coverage is strong."),
+            _check("grounding_consistency", False, 0.9, "One claim is weakly grounded."),
+        ]
+    )
+    confidence = service.score_confidence(
+        signals=[ConfidenceSignal(signal_name="retrieval_strength", value=1.0, weight=1.0)],
+        verification=verification,
+    )
+
+    gate = service.decide_gate(confidence=confidence, verification=verification)
+
+    assert confidence.band == "pass"
+    assert gate.decision == "review"
+    assert gate.allow_execution is False
+    assert gate.reason == "Verification is inconclusive, manual review required."
+
+
+def test_decide_gate_blocks_when_confidence_below_review_threshold() -> None:
+    service = ReliabilityService(pass_threshold=0.8, review_threshold=0.6)
+    verification = service.summarize_verification(
+        checks=[_check("citation_presence", True, 1.0, "Citations are present.")]
+    )
+    confidence = service.score_confidence(
+        signals=[ConfidenceSignal(signal_name="retrieval_strength", value=0.0, weight=1.0)],
+        verification=verification,
+    )
+
+    gate = service.decide_gate(confidence=confidence, verification=verification)
+
+    assert confidence.score == pytest.approx(0.5)
+    assert confidence.band == "block"
+    assert gate.decision == "block"
+    assert gate.allow_execution is False
+    assert gate.reason == "Confidence score below review threshold."
 
 
 def test_decide_gate_passes_when_gating_disabled() -> None:
@@ -113,3 +166,36 @@ def test_execution_trace_enforces_max_tool_calls() -> None:
             tool_name="verify_citations",
             status="succeeded",
         )
+
+
+def test_finalize_trace_records_assessment_and_completion_timestamp() -> None:
+    service = ReliabilityService()
+    trace = service.start_trace(
+        trace_id="trace-2",
+        document_id=2,
+        workflow_name="constrained_research_agent",
+        started_at=datetime(2026, 3, 22, 11, 0, tzinfo=timezone.utc),
+    )
+    verification = service.summarize_verification(
+        checks=[_check("citation_presence", True, 1.0, "All claims have citations.")]
+    )
+    confidence = service.score_confidence(
+        signals=[ConfidenceSignal(signal_name="retrieval_strength", value=1.0, weight=1.0)],
+        verification=verification,
+    )
+    gate = service.decide_gate(confidence=confidence, verification=verification)
+
+    finalized = service.finalize_trace(
+        trace=trace,
+        status="completed",
+        verification=verification,
+        confidence=confidence,
+        gate_decision=gate,
+        completed_at=datetime(2026, 3, 22, 11, 0, 1, tzinfo=timezone.utc),
+    )
+
+    assert finalized.status == "completed"
+    assert finalized.completed_at == datetime(2026, 3, 22, 11, 0, 1, tzinfo=timezone.utc)
+    assert finalized.verification is not None
+    assert finalized.confidence is not None
+    assert finalized.gate_decision is not None

@@ -113,3 +113,87 @@ def test_grounded_evaluator_reports_missing_grounding_and_numeric_claims(
     assert assessment.gate_decision.allow_execution is False
     assert "Unsupported numeric claims detected" in " ".join(assessment.issues)
     assert result.unsupported_numeric_claims == ["999"]
+
+
+def test_grounded_evaluator_reports_partial_citation_verification_scores(
+    document_with_chunks: tuple[int, int],
+) -> None:
+    document_id, chunk_index = document_with_chunks
+    db = SessionLocal()
+    evaluator = GroundedAskReliabilityEvaluator()
+    try:
+        result = evaluator.evaluate(
+            db=db,
+            document_id=document_id,
+            answer="Revenue was 120 in Q4. [C1] [C2]",
+            citations=[
+                Citation(
+                    citation_id="C1",
+                    rank=1,
+                    document_id=document_id,
+                    chunk_index=chunk_index,
+                    page_number=1,
+                    text_excerpt="Revenue was 120 in Q4 and margin was stable.",
+                    retrieval_score=0.9,
+                ),
+                Citation(
+                    citation_id="C2",
+                    rank=2,
+                    document_id=999,
+                    chunk_index=999,
+                    page_number=1,
+                    text_excerpt="Unsupported excerpt.",
+                    retrieval_score=0.2,
+                ),
+            ],
+        )
+    finally:
+        db.close()
+
+    checks = {
+        check.check_name: check for check in result.assessment.verification.checks
+    }
+    assert checks["citation_exists"].score == pytest.approx(0.5)
+    assert checks["citation_document_match"].score == pytest.approx(0.5)
+    assert checks["citation_excerpt_in_chunk"].score == pytest.approx(0.5)
+    assert checks["citation_exists"].citation_ids == ["C1"]
+    assert checks["citation_document_match"].citation_ids == ["C1"]
+    assert checks["citation_excerpt_in_chunk"].citation_ids == ["C1"]
+    assert result.assessment.verification.status == "failed"
+    assert result.assessment.gate_decision.decision == "block"
+
+
+def test_grounded_evaluator_builds_deterministic_confidence_signals(
+    document_with_chunks: tuple[int, int],
+) -> None:
+    document_id, chunk_index = document_with_chunks
+    db = SessionLocal()
+    evaluator = GroundedAskReliabilityEvaluator()
+    try:
+        result = evaluator.evaluate(
+            db=db,
+            document_id=document_id,
+            answer="Revenue was 120 in Q4. [C1]",
+            citations=[
+                Citation(
+                    citation_id="C1",
+                    rank=1,
+                    document_id=document_id,
+                    chunk_index=chunk_index,
+                    page_number=1,
+                    text_excerpt="Revenue was 120 in Q4 and margin was stable.",
+                    retrieval_score=0.0,
+                )
+            ],
+        )
+    finally:
+        db.close()
+
+    confidence = result.assessment.confidence
+    signal_by_name = {signal.signal_name: signal for signal in confidence.signals}
+    assert signal_by_name["supporting_citation_count"].value == pytest.approx(0.333333)
+    assert signal_by_name["retrieval_score_quality"].value == pytest.approx(0.5)
+    assert signal_by_name["verification_outcome"].value == pytest.approx(1.0)
+    assert signal_by_name["unsupported_numeric_claims"].value == pytest.approx(1.0)
+    assert confidence.score == pytest.approx(0.8375)
+    assert confidence.band == "pass"

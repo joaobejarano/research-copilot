@@ -165,7 +165,36 @@ def _agent(document_id: int, payload: dict[str, object]) -> httpx.Response:
     return asyncio.run(request())
 
 
-def test_agent_endpoint_returns_completed_for_grounded_question(
+def _assert_trace_structure(
+    *,
+    trace: dict[str, object],
+    expected_status: str,
+    expected_document_id: int,
+    expected_tool_name: str,
+    expected_tool_status: str,
+) -> None:
+    assert trace["workflow_name"] == "constrained_research_agent"
+    assert str(trace["trace_id"]).startswith(f"agent-{expected_document_id}-")
+    assert trace["document_id"] == expected_document_id
+    assert trace["status"] == expected_status
+    assert trace["started_at"] is not None
+    assert trace["completed_at"] is not None
+    assert trace["verification"] is not None
+    assert trace["confidence"] is not None
+    assert trace["gate_decision"] is not None
+
+    tool_calls = trace["tool_calls"]
+    assert isinstance(tool_calls, list)
+    assert len(tool_calls) == 1
+    tool_call = tool_calls[0]
+    assert tool_call["sequence"] == 1
+    assert tool_call["tool_name"] == expected_tool_name
+    assert tool_call["status"] == expected_tool_status
+    assert tool_call["started_at"] is not None
+    assert tool_call["completed_at"] is not None
+
+
+def test_agent_endpoint_returns_passed_for_grounded_question(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     document_id = _seed_document_with_chunk(
@@ -190,8 +219,13 @@ def test_agent_endpoint_returns_completed_for_grounded_question(
     assert payload["outputs_withheld"] is False
     assert payload["decision_reasons"] == []
     assert payload["outputs"]["ask"]["status"] == "answered"
-    assert payload["trace"]["status"] == "completed"
-    assert payload["trace"]["tool_calls"][0]["tool_name"] == "ask"
+    _assert_trace_structure(
+        trace=payload["trace"],
+        expected_status="completed",
+        expected_document_id=document_id,
+        expected_tool_name="ask",
+        expected_tool_status="succeeded",
+    )
     assert payload["confidence"]["band"] == "pass"
     assert payload["gate_decision"]["decision"] == "pass"
 
@@ -223,6 +257,13 @@ def test_agent_endpoint_returns_needs_review_when_support_is_insufficient(
     assert payload["outputs"] == {}
     assert len(payload["decision_reasons"]) >= 2
     assert any("withheld" in reason.lower() for reason in payload["decision_reasons"])
+    _assert_trace_structure(
+        trace=payload["trace"],
+        expected_status="needs_review",
+        expected_document_id=document_id,
+        expected_tool_name="ask",
+        expected_tool_status="succeeded",
+    )
 
 
 def test_agent_endpoint_returns_blocked_when_document_not_ready() -> None:
@@ -236,11 +277,16 @@ def test_agent_endpoint_returns_blocked_when_document_not_ready() -> None:
     assert payload["selected_tools"] == ["memo"]
     assert payload["outputs_withheld"] is True
     assert payload["outputs"] == {}
-    assert payload["trace"]["status"] == "blocked"
-    assert payload["trace"]["tool_calls"][0]["tool_name"] == "document_ready_check"
-    assert payload["trace"]["tool_calls"][0]["status"] == "blocked"
     assert payload["gate_decision"]["decision"] == "block"
     assert payload["decision_reasons"]
+    _assert_trace_structure(
+        trace=payload["trace"],
+        expected_status="blocked",
+        expected_document_id=document_id,
+        expected_tool_name="document_ready_check",
+        expected_tool_status="blocked",
+    )
+    assert payload["trace"]["tool_calls"][0]["error"] is not None
 
 
 def test_agent_endpoint_selects_only_requested_tools_and_executes_in_order(
@@ -277,3 +323,28 @@ def test_agent_endpoint_returns_404_for_missing_document() -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Document not found."
+
+
+def test_agent_endpoint_returns_deterministic_trace_id_for_same_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document_id = _seed_document(status="ready")
+    monkeypatch.setattr(
+        agent_workflow,
+        "answer_document_question",
+        lambda **kwargs: QuestionAnswerResult(
+            question=str(kwargs["question"]),
+            answer="Insufficient evidence to answer the question from retrieved context.",
+            status="insufficient_evidence",
+            citations=[],
+        ),
+    )
+
+    first_response = _agent(document_id, {"instruction": "What was free cash flow?"})
+    second_response = _agent(document_id, {"instruction": "What was free cash flow?"})
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    first_trace_id = first_response.json()["trace"]["trace_id"]
+    second_trace_id = second_response.json()["trace"]["trace_id"]
+    assert first_trace_id == second_trace_id
