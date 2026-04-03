@@ -1,0 +1,98 @@
+{
+  "dataset_id": "stage7_seed_cases",
+  "version": "1.0.0",
+  "description": "Initial local eval case set for Stage 7 grounded research workflows.",
+  "cases": [
+    {
+      "id": "qa_revenue_q4_grounded",
+      "workflow_type": "grounded_qa",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "source_filename": "acme_q4_report.txt",
+        "notes": "Seed grounded Q&A case for revenue question."
+      },
+      "input": {
+        "question": "What happened to revenue in Q4?"
+      },
+      "expected_behavior": "Answer should be grounded in document citations, or explicitly return insufficient evidence.",
+      "expected_fields": [
+        "question",
+        "answer",
+        "status",
+        "citations"
+      ],
+      "expected_status": "answered"
+    },
+    {
+      "id": "memo_acme_q4",
+      "workflow_type": "memo_generation",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "source_filename": "acme_q4_report.txt"
+      },
+      "input": {
+        "instruction": "Generate a grounded investment memo with key developments and risks."
+      },
+      "expected_behavior": "Return a memo payload grounded by citations or insufficient evidence when retrieval is weak.",
+      "expected_fields": [
+        "status",
+        "memo"
+      ],
+      "expected_status": "generated"
+    },
+    {
+      "id": "kpis_acme_q4",
+      "workflow_type": "kpi_extraction",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "source_filename": "acme_q4_report.txt"
+      },
+      "input": {
+        "instruction": "Extract decision-relevant KPIs from the document."
+      },
+      "expected_behavior": "Return KPI list with citation-backed items or insufficient evidence.",
+      "expected_fields": [
+        "status",
+        "kpis",
+        "evidence"
+      ],
+      "expected_status": "completed"
+    },
+    {
+      "id": "risks_acme_q4",
+      "workflow_type": "risk_extraction",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "source_filename": "acme_q4_report.txt"
+      },
+      "input": {
+        "instruction": "Extract material risks and their severity."
+      },
+      "expected_behavior": "Return risk list with evidence citations or insufficient evidence.",
+      "expected_fields": [
+        "status",
+        "risks",
+        "evidence"
+      ],
+      "expected_status": "completed"
+    },
+    {
+      "id": "timeline_acme_q4",
+      "workflow_type": "timeline_building",
+      "document_reference": {
+        "reference_id": "acme_financial_report_2024_q4",
+        "source_filename": "acme_q4_report.txt"
+      },
+      "input": {
+        "instruction": "Build a concise timeline of key events in the quarter."
+      },
+      "expected_behavior": "Return timeline events grounded by citations or insufficient evidence.",
+      "expected_fields": [
+        "status",
+        "events",
+        "evidence"
+      ],
+      "expected_status": "completed"
+    }
+  ]
+}
