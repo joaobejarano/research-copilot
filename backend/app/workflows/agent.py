@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 from app.qa.service import QuestionAnswerResult, answer_document_question
 from app.reliability.schemas import (
     AgentExecutionTrace,
+    AgentTraceStatus,
     ConfidenceResult,
     ConfidenceSignal,
     GateDecision,
     VerificationCheckResult,
+    VerificationOutcome,
 )
 from app.reliability.service import ReliabilityService
 from app.workflows.schemas import (
@@ -27,7 +29,7 @@ from app.workflows.service import StructuredWorkflowService
 AGENT_MODEL_CONFIG = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 AgentToolName = Literal["ask", "memo", "extract_kpis", "extract_risks", "build_timeline"]
-AgentRunStatus = Literal["completed", "needs_review", "blocked"]
+AgentRunStatus = Literal["passed", "needs_review", "blocked"]
 
 TOOL_KEYWORD_PATTERN = re.compile(r"[a-z0-9]+")
 QUESTION_PREFIXES = ("what ", "why ", "how ", "when ", "where ", "who ", "which ")
@@ -54,6 +56,8 @@ class ConstrainedResearchAgentOutput(BaseModel):
     selected_tools: list[AgentToolName] = Field(default_factory=list, max_length=SUPPORTED_TOOL_COUNT)
     trace: AgentExecutionTrace
     outputs: dict[str, Any] = Field(default_factory=dict)
+    outputs_withheld: bool = False
+    decision_reasons: list[str] = Field(default_factory=list, max_length=100)
     confidence: ConfidenceResult
     gate_decision: GateDecision
 
@@ -89,7 +93,7 @@ class ConstrainedResearchAgent:
             workflow_name="constrained_research_agent",
         )
 
-        outputs: dict[str, Any] = {}
+        raw_outputs: dict[str, Any] = {}
         execution_error: str | None = None
 
         if not document_ready:
@@ -116,7 +120,7 @@ class ConstrainedResearchAgent:
                         top_k=top_k,
                         min_similarity=min_similarity,
                     )
-                    outputs[tool_name] = output
+                    raw_outputs[tool_name] = output
                     trace = self._reliability_service.append_tool_call(
                         trace=trace,
                         tool_name=tool_name,
@@ -138,13 +142,13 @@ class ConstrainedResearchAgent:
 
         verification_checks = self._build_verification_checks(
             selected_tools=selected_tools,
-            outputs=outputs,
+            outputs=raw_outputs,
             execution_error=execution_error,
         )
         verification = self._reliability_service.summarize_verification(checks=verification_checks)
         confidence_signals = self._build_confidence_signals(
             selected_tools=selected_tools,
-            outputs=outputs,
+            outputs=raw_outputs,
         )
         confidence = self._reliability_service.score_confidence(
             signals=confidence_signals,
@@ -154,10 +158,20 @@ class ConstrainedResearchAgent:
             confidence=confidence,
             verification=verification,
         )
-        final_status = self._status_from_gate_decision(gate_decision.decision)
+        response_status = self._response_status_from_gate_decision(gate_decision.decision)
+        trace_status = self._trace_status_from_gate_decision(gate_decision.decision)
+        safe_outputs, outputs_withheld = self._apply_output_gate(
+            raw_outputs=raw_outputs,
+            decision=gate_decision.decision,
+        )
+        decision_reasons = self._build_decision_reasons(
+            gate_decision=gate_decision,
+            verification=verification,
+            outputs_withheld=outputs_withheld,
+        )
         trace = self._reliability_service.finalize_trace(
             trace=trace,
-            status=final_status,
+            status=trace_status,
             verification=verification,
             confidence=confidence,
             gate_decision=gate_decision,
@@ -166,10 +180,12 @@ class ConstrainedResearchAgent:
         return ConstrainedResearchAgentOutput(
             document_id=document_id,
             instruction=normalized_instruction,
-            status=final_status,
+            status=response_status,
             selected_tools=selected_tools,
             trace=trace,
-            outputs=outputs,
+            outputs=safe_outputs,
+            outputs_withheld=outputs_withheld,
+            decision_reasons=decision_reasons,
             confidence=confidence,
             gate_decision=gate_decision,
         )
@@ -398,12 +414,59 @@ class ConstrainedResearchAgent:
         return supported_outputs
 
     @staticmethod
-    def _status_from_gate_decision(decision: Literal["pass", "review", "block"]) -> AgentRunStatus:
+    def _response_status_from_gate_decision(
+        decision: Literal["pass", "review", "block"]
+    ) -> AgentRunStatus:
+        if decision == "pass":
+            return "passed"
+        if decision == "review":
+            return "needs_review"
+        return "blocked"
+
+    @staticmethod
+    def _trace_status_from_gate_decision(
+        decision: Literal["pass", "review", "block"]
+    ) -> AgentTraceStatus:
         if decision == "pass":
             return "completed"
         if decision == "review":
             return "needs_review"
         return "blocked"
+
+    @staticmethod
+    def _apply_output_gate(
+        *,
+        raw_outputs: dict[str, Any],
+        decision: Literal["pass", "review", "block"],
+    ) -> tuple[dict[str, Any], bool]:
+        if decision == "pass":
+            return raw_outputs, False
+        return {}, True
+
+    @staticmethod
+    def _build_decision_reasons(
+        *,
+        gate_decision: GateDecision,
+        verification: VerificationOutcome,
+        outputs_withheld: bool,
+    ) -> list[str]:
+        if gate_decision.decision == "pass":
+            return []
+
+        reasons: list[str] = [gate_decision.reason]
+        if outputs_withheld:
+            reasons.append(
+                "Final outputs were withheld because confidence gating did not pass."
+            )
+        for issue in verification.issues:
+            if issue not in reasons:
+                reasons.append(issue)
+        for check in verification.checks:
+            if check.passed:
+                continue
+            if check.detail not in reasons:
+                reasons.append(check.detail)
+        return reasons
 
     @staticmethod
     def _build_trace_id(*, document_id: int, instruction: str) -> str:

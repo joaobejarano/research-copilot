@@ -185,8 +185,10 @@ def test_agent_endpoint_returns_completed_for_grounded_question(
     assert response.status_code == 200
     payload = response.json()
     assert payload["instruction"] == "What happened to revenue in Q4?"
-    assert payload["status"] == "completed"
+    assert payload["status"] == "passed"
     assert payload["selected_tools"] == ["ask"]
+    assert payload["outputs_withheld"] is False
+    assert payload["decision_reasons"] == []
     assert payload["outputs"]["ask"]["status"] == "answered"
     assert payload["trace"]["status"] == "completed"
     assert payload["trace"]["tool_calls"][0]["tool_name"] == "ask"
@@ -215,9 +217,12 @@ def test_agent_endpoint_returns_needs_review_when_support_is_insufficient(
     payload = response.json()
     assert payload["status"] == "needs_review"
     assert payload["selected_tools"] == ["ask"]
+    assert payload["outputs_withheld"] is True
     assert payload["trace"]["status"] == "needs_review"
     assert payload["gate_decision"]["decision"] == "review"
-    assert payload["outputs"]["ask"]["status"] == "insufficient_evidence"
+    assert payload["outputs"] == {}
+    assert len(payload["decision_reasons"]) >= 2
+    assert any("withheld" in reason.lower() for reason in payload["decision_reasons"])
 
 
 def test_agent_endpoint_returns_blocked_when_document_not_ready() -> None:
@@ -229,11 +234,13 @@ def test_agent_endpoint_returns_blocked_when_document_not_ready() -> None:
     payload = response.json()
     assert payload["status"] == "blocked"
     assert payload["selected_tools"] == ["memo"]
+    assert payload["outputs_withheld"] is True
     assert payload["outputs"] == {}
     assert payload["trace"]["status"] == "blocked"
     assert payload["trace"]["tool_calls"][0]["tool_name"] == "document_ready_check"
     assert payload["trace"]["tool_calls"][0]["status"] == "blocked"
     assert payload["gate_decision"]["decision"] == "block"
+    assert payload["decision_reasons"]
 
 
 def test_agent_endpoint_selects_only_requested_tools_and_executes_in_order(
@@ -256,8 +263,10 @@ def test_agent_endpoint_selects_only_requested_tools_and_executes_in_order(
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "completed"
+    assert payload["status"] == "passed"
     assert payload["selected_tools"] == ["extract_kpis", "extract_risks"]
+    assert payload["outputs_withheld"] is False
+    assert payload["decision_reasons"] == []
     assert set(payload["outputs"].keys()) == {"extract_kpis", "extract_risks"}
     assert payload["gate_decision"]["decision"] == "pass"
     assert fake_workflow_service.calls == ["extract_kpis", "extract_risks"]
