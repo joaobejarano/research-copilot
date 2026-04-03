@@ -22,6 +22,7 @@ from app.qa.service import answer_document_question
 from app.reliability.grounded import GroundedAskReliabilityEvaluator
 from app.reliability.schemas import ConfidenceResult, GateDecision, VerificationOutcome
 from app.retrieval.service import retrieve_relevant_chunks
+from app.workflows.agent import ConstrainedResearchAgent, ConstrainedResearchAgentOutput
 from app.workflows.schemas import (
     KPIExtractionOutput,
     KPIExtractionRequest,
@@ -177,12 +178,22 @@ class DocumentTimelineRequest(BaseModel):
     min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
 
 
+class DocumentAgentRequest(BaseModel):
+    instruction: str = Field(min_length=1, max_length=1200)
+    top_k: int | None = Field(default=None, ge=1)
+    min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+
 def get_structured_workflow_service() -> StructuredWorkflowService:
     return StructuredWorkflowService()
 
 
 def get_grounded_ask_reliability_evaluator() -> GroundedAskReliabilityEvaluator:
     return GroundedAskReliabilityEvaluator()
+
+
+def get_constrained_research_agent() -> ConstrainedResearchAgent:
+    return ConstrainedResearchAgent()
 
 
 def _sanitize_path_component(value: str) -> str:
@@ -426,6 +437,27 @@ async def verify_document_question(
         confidence=assessment.confidence,
         gate_decision=assessment.gate_decision,
         issues=assessment.issues,
+    )
+
+
+@router.post("/{document_id}/agent", response_model=ConstrainedResearchAgentOutput)
+async def run_document_agent(
+    document_id: int,
+    payload: DocumentAgentRequest,
+    db: Session = Depends(get_db),
+) -> ConstrainedResearchAgentOutput:
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    agent = get_constrained_research_agent()
+    return agent.run(
+        db=db,
+        document_id=document_id,
+        instruction=payload.instruction,
+        document_ready=document.status == "ready",
+        top_k=payload.top_k,
+        min_similarity=payload.min_similarity,
     )
 
 
