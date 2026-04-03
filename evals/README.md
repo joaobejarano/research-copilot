@@ -7,6 +7,7 @@ This folder contains a local, inspectable eval runner for grounded research work
 - `evals/schemas.py`: explicit Pydantic schemas for dataset fixtures and results
 - `evals/datasets/stage7_seed_cases.json`: seed eval dataset with document fixtures and cases
 - `evals/runner.py`: deterministic local runner that executes existing backend workflows
+- `evals/feedback_export.py`: exports stored feedback into follow-up eval candidate cases
 - `evals/results/`: output reports from local runs
 
 ## Supported workflow types
@@ -62,3 +63,39 @@ By default it writes:
 
 - JSON report: `evals/results/stage7_eval_report_<timestamp>.json`
 - Markdown report: `evals/results/stage7_eval_report_<timestamp>.md`
+
+## Feedback to follow-up eval candidates
+
+Use this lightweight export path to turn stored reviewer feedback into future eval candidate cases.
+
+Default behavior prioritizes negative feedback rows as follow-up opportunities.
+
+```bash
+python -m evals.feedback_export \
+  --database-url "${DATABASE_URL}" \
+  --feedback-value negative \
+  --limit 200
+```
+
+Optional output path:
+
+```bash
+python -m evals.feedback_export \
+  --database-url "${DATABASE_URL}" \
+  --feedback-value negative \
+  --output evals/results/feedback_followup_candidates.json
+```
+
+The generated JSON includes:
+
+- `summary` with scanned/generated/skipped counts
+- `candidates` with `eval_case_candidate` templates
+- `skipped` rows (for workflows not yet supported by Stage 7 eval runner, such as `agent`)
+
+### How to fold into future eval iterations
+
+1. Generate negative-feedback candidates with `evals.feedback_export`.
+2. Review candidate `eval_case_candidate` entries and prioritize recurring failure themes.
+3. Map each candidate `document_reference` to a real fixture reference in a dataset file.
+4. Refine `input` and `expected_behavior` from reviewer reason/notes.
+5. Append selected cases into the maintained eval dataset and rerun `python -m evals.runner`.
