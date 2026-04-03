@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiClientError } from "../../lib/api/client";
+import { createFeedback, listFeedback } from "../../lib/api/feedback";
 import {
   askGroundedQuestion,
   getDocumentChunks,
@@ -16,6 +17,7 @@ import type {
   DocumentStatusModel,
   GetDocumentDetailResponseModel
 } from "../../lib/api/models/documents";
+import type { FeedbackRecordModel, FeedbackValue } from "../../lib/api/models/feedback";
 
 function formatCreatedAt(createdAt: string): string {
   const parsedDate = new Date(createdAt);
@@ -23,6 +25,11 @@ function formatCreatedAt(createdAt: string): string {
     return createdAt;
   }
   return parsedDate.toLocaleString();
+}
+
+function buildAskTargetReference(askResult: AskGroundedQuestionResponseModel): string {
+  const normalizedQuestion = askResult.question.trim().replace(/\s+/g, " ").slice(0, 180);
+  return `ask:${askResult.status}:${normalizedQuestion}`;
 }
 
 function toErrorMessage(error: unknown): string {
@@ -66,6 +73,15 @@ export default function DocumentsPage() {
   const [isAskingQuestion, setIsAskingQuestion] = useState<boolean>(false);
   const [askErrorMessage, setAskErrorMessage] = useState<string | null>(null);
   const [askResult, setAskResult] = useState<AskGroundedQuestionResponseModel | null>(null);
+  const [feedbackValue, setFeedbackValue] = useState<FeedbackValue>("positive");
+  const [feedbackReason, setFeedbackReason] = useState<string>("");
+  const [feedbackReviewerNote, setFeedbackReviewerNote] = useState<string>("");
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState<boolean>(false);
+  const [feedbackSubmitErrorMessage, setFeedbackSubmitErrorMessage] = useState<string | null>(null);
+  const [feedbackSubmitStatusMessage, setFeedbackSubmitStatusMessage] = useState<string | null>(null);
+  const [feedbackRecords, setFeedbackRecords] = useState<FeedbackRecordModel[]>([]);
+  const [isFeedbackLoading, setIsFeedbackLoading] = useState<boolean>(false);
+  const [feedbackLoadErrorMessage, setFeedbackLoadErrorMessage] = useState<string | null>(null);
 
   async function loadDocuments(): Promise<void> {
     setIsLoading(true);
@@ -114,6 +130,15 @@ export default function DocumentsPage() {
       setIsAskingQuestion(false);
       setAskErrorMessage(null);
       setAskResult(null);
+      setFeedbackValue("positive");
+      setFeedbackReason("");
+      setFeedbackReviewerNote("");
+      setIsSubmittingFeedback(false);
+      setFeedbackSubmitErrorMessage(null);
+      setFeedbackSubmitStatusMessage(null);
+      setFeedbackRecords([]);
+      setIsFeedbackLoading(false);
+      setFeedbackLoadErrorMessage(null);
       return;
     }
 
@@ -182,8 +207,38 @@ export default function DocumentsPage() {
       }
     }
 
+    async function loadSelectedDocumentFeedback(): Promise<void> {
+      setFeedbackValue("positive");
+      setFeedbackReason("");
+      setFeedbackReviewerNote("");
+      setIsSubmittingFeedback(false);
+      setFeedbackSubmitErrorMessage(null);
+      setFeedbackSubmitStatusMessage(null);
+      setFeedbackRecords([]);
+      setIsFeedbackLoading(true);
+      setFeedbackLoadErrorMessage(null);
+
+      try {
+        const feedbackResponse = await listFeedback({ document_id: documentId, limit: 10 });
+        if (isCancelled) {
+          return;
+        }
+        setFeedbackRecords(feedbackResponse);
+      } catch (error) {
+        if (isCancelled) {
+          return;
+        }
+        setFeedbackLoadErrorMessage(toErrorMessage(error));
+      } finally {
+        if (!isCancelled) {
+          setIsFeedbackLoading(false);
+        }
+      }
+    }
+
     void loadSelectedDocumentDetail();
     void loadSelectedDocumentChunks();
+    void loadSelectedDocumentFeedback();
 
     return () => {
       isCancelled = true;
@@ -231,6 +286,25 @@ export default function DocumentsPage() {
       setChunksErrorMessage(toErrorMessage(error));
     } finally {
       setIsChunksLoading(false);
+    }
+  }
+
+  async function refreshSelectedDocumentFeedback(): Promise<void> {
+    if (selectedDocumentId === null) {
+      return;
+    }
+
+    setIsFeedbackLoading(true);
+    setFeedbackLoadErrorMessage(null);
+
+    try {
+      const feedbackResponse = await listFeedback({ document_id: selectedDocumentId, limit: 10 });
+      setFeedbackRecords(feedbackResponse);
+    } catch (error) {
+      setFeedbackRecords([]);
+      setFeedbackLoadErrorMessage(toErrorMessage(error));
+    } finally {
+      setIsFeedbackLoading(false);
     }
   }
 
@@ -313,11 +387,65 @@ export default function DocumentsPage() {
         question: normalizedQuestion
       });
       setAskResult(askResponse);
+      setFeedbackValue("positive");
+      setFeedbackReason("");
+      setFeedbackReviewerNote("");
+      setFeedbackSubmitErrorMessage(null);
+      setFeedbackSubmitStatusMessage(null);
     } catch (error) {
       setAskResult(null);
       setAskErrorMessage(toErrorMessage(error));
     } finally {
       setIsAskingQuestion(false);
+    }
+  }
+
+  async function handleSubmitFeedback(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+
+    if (selectedDocumentId === null || isSubmittingFeedback) {
+      return;
+    }
+
+    if (askResult === null) {
+      setFeedbackSubmitErrorMessage(
+        "Run grounded Q&A first so feedback can be linked to an output."
+      );
+      setFeedbackSubmitStatusMessage(null);
+      return;
+    }
+
+    const normalizedReason = feedbackReason.trim();
+    const normalizedReviewerNote = feedbackReviewerNote.trim();
+
+    if (feedbackValue === "negative" && normalizedReason.length === 0) {
+      setFeedbackSubmitErrorMessage("Reason is required when feedback is negative.");
+      setFeedbackSubmitStatusMessage(null);
+      return;
+    }
+
+    setIsSubmittingFeedback(true);
+    setFeedbackSubmitErrorMessage(null);
+    setFeedbackSubmitStatusMessage(null);
+
+    try {
+      await createFeedback({
+        workflow_type: "ask",
+        document_id: selectedDocumentId,
+        target_reference: buildAskTargetReference(askResult),
+        feedback_value: feedbackValue,
+        reason: feedbackValue === "negative" ? normalizedReason : undefined,
+        reviewer_note: normalizedReviewerNote.length > 0 ? normalizedReviewerNote : undefined
+      });
+
+      setFeedbackReason("");
+      setFeedbackReviewerNote("");
+      setFeedbackSubmitStatusMessage("Feedback saved.");
+      await refreshSelectedDocumentFeedback();
+    } catch (error) {
+      setFeedbackSubmitErrorMessage(toErrorMessage(error));
+    } finally {
+      setIsSubmittingFeedback(false);
     }
   }
 
@@ -598,6 +726,169 @@ export default function DocumentsPage() {
                       Submit a question to see a grounded answer with citations.
                     </p>
                   ) : null}
+                </section>
+
+                <section className="review-section">
+                  <div className="review-section-header">
+                    <h3>Human review</h3>
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => void refreshSelectedDocumentFeedback()}
+                      disabled={isFeedbackLoading || isSubmittingFeedback}
+                    >
+                      {isFeedbackLoading ? "Refreshing feedback..." : "Refresh feedback"}
+                    </button>
+                  </div>
+                  <p className="section-note">
+                    Capture quick analyst feedback for the latest grounded answer.
+                  </p>
+
+                  <form className="review-form" onSubmit={(event) => void handleSubmitFeedback(event)}>
+                    <p className="review-label">Feedback value</p>
+                    <div className="review-choice-row">
+                      <button
+                        type="button"
+                        className={
+                          feedbackValue === "positive"
+                            ? "button review-choice-positive-active"
+                            : "button"
+                        }
+                        onClick={() => setFeedbackValue("positive")}
+                        disabled={isSubmittingFeedback || askResult === null}
+                      >
+                        Thumbs up
+                      </button>
+                      <button
+                        type="button"
+                        className={
+                          feedbackValue === "negative"
+                            ? "button review-choice-negative-active"
+                            : "button"
+                        }
+                        onClick={() => setFeedbackValue("negative")}
+                        disabled={isSubmittingFeedback || askResult === null}
+                      >
+                        Thumbs down
+                      </button>
+                    </div>
+
+                    <label htmlFor="feedback-reason-input" className="review-label">
+                      Reason {feedbackValue === "negative" ? "(required)" : "(optional)"}
+                    </label>
+                    <textarea
+                      id="feedback-reason-input"
+                      className="review-textarea"
+                      value={feedbackReason}
+                      onChange={(event) => setFeedbackReason(event.target.value)}
+                      placeholder="Why this output was good or problematic."
+                      rows={2}
+                      disabled={isSubmittingFeedback || askResult === null}
+                    />
+
+                    <label htmlFor="feedback-note-input" className="review-label">
+                      Reviewer note (optional)
+                    </label>
+                    <textarea
+                      id="feedback-note-input"
+                      className="review-textarea"
+                      value={feedbackReviewerNote}
+                      onChange={(event) => setFeedbackReviewerNote(event.target.value)}
+                      placeholder="Additional context for future review."
+                      rows={2}
+                      disabled={isSubmittingFeedback || askResult === null}
+                    />
+
+                    <div className="review-actions">
+                      <button
+                        type="submit"
+                        className="button"
+                        disabled={isSubmittingFeedback || askResult === null}
+                      >
+                        {isSubmittingFeedback ? "Saving feedback..." : "Save feedback"}
+                      </button>
+                    </div>
+                  </form>
+
+                  {askResult === null ? (
+                    <p className="empty-hint">Run grounded Q&A to enable feedback submission.</p>
+                  ) : null}
+
+                  {feedbackSubmitErrorMessage ? (
+                    <section className="error-panel">
+                      <p>Could not save feedback: {feedbackSubmitErrorMessage}</p>
+                    </section>
+                  ) : null}
+
+                  {feedbackSubmitStatusMessage ? (
+                    <p className="review-success-text">{feedbackSubmitStatusMessage}</p>
+                  ) : null}
+
+                  <div className="review-history">
+                    <h4>Recent feedback</h4>
+
+                    {isFeedbackLoading ? <p className="inline-loading">Loading feedback...</p> : null}
+
+                    {!isFeedbackLoading && feedbackLoadErrorMessage ? (
+                      <section className="error-panel">
+                        <p>Could not load feedback: {feedbackLoadErrorMessage}</p>
+                        <button
+                          type="button"
+                          className="button"
+                          onClick={() => void refreshSelectedDocumentFeedback()}
+                          disabled={isSubmittingFeedback}
+                        >
+                          Retry feedback
+                        </button>
+                      </section>
+                    ) : null}
+
+                    {!isFeedbackLoading &&
+                    !feedbackLoadErrorMessage &&
+                    feedbackRecords.length === 0 ? (
+                      <p className="empty-hint">No feedback has been recorded for this document yet.</p>
+                    ) : null}
+
+                    {!isFeedbackLoading &&
+                    !feedbackLoadErrorMessage &&
+                    feedbackRecords.length > 0 ? (
+                      <div className="feedback-list">
+                        {feedbackRecords.map((feedbackRecord) => (
+                          <article key={feedbackRecord.id} className="feedback-card">
+                            <header className="feedback-meta">
+                              <span>#{feedbackRecord.id}</span>
+                              <span>{feedbackRecord.workflow_type}</span>
+                              <span
+                                className={
+                                  feedbackRecord.feedback_value === "positive"
+                                    ? "feedback-value-pill positive"
+                                    : "feedback-value-pill negative"
+                                }
+                              >
+                                {feedbackRecord.feedback_value}
+                              </span>
+                              <span title={feedbackRecord.created_at}>
+                                {formatCreatedAt(feedbackRecord.created_at)}
+                              </span>
+                            </header>
+                            {feedbackRecord.target_reference ? (
+                              <p className="feedback-detail">
+                                target_reference: {feedbackRecord.target_reference}
+                              </p>
+                            ) : null}
+                            {feedbackRecord.reason ? (
+                              <p className="feedback-detail">reason: {feedbackRecord.reason}</p>
+                            ) : null}
+                            {feedbackRecord.reviewer_note ? (
+                              <p className="feedback-detail">
+                                reviewer_note: {feedbackRecord.reviewer_note}
+                              </p>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </section>
 
                 <section className="chunks-section">
