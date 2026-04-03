@@ -25,6 +25,7 @@ def ensure_pgvector_extension() -> None:
 def create_tables() -> None:
     from app.db.models.document import Document  # noqa: F401
     from app.db.models.document_chunk import DocumentChunk  # noqa: F401
+    from app.db.models.feedback import Feedback  # noqa: F401
 
     ensure_pgvector_extension()
     Base.metadata.create_all(bind=engine)
