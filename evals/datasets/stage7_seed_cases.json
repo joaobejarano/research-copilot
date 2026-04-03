@@ -1,98 +1,138 @@
 {
   "dataset_id": "stage7_seed_cases",
-  "version": "1.0.0",
-  "description": "Initial local eval case set for Stage 7 grounded research workflows.",
+  "version": "2.0.0",
+  "description": "Stage 7 practical eval cases that execute existing grounded research workflows.",
+  "document_fixtures": [
+    {
+      "reference_id": "acme_financial_report_2024_q4",
+      "company_name": "Acme Corp",
+      "document_type": "financial_report",
+      "period": "2024-Q4",
+      "source_filename": "acme_q4_report.txt",
+      "status": "ready",
+      "chunks": [
+        {
+          "chunk_index": 0,
+          "page_number": 1,
+          "token_count": 48,
+          "text": "Revenue increased 12 percent in Q4 to 120M USD. Management highlighted foreign exchange volatility as a medium risk. On 2024-10-15 the company launched Product X."
+        },
+        {
+          "chunk_index": 1,
+          "page_number": 2,
+          "token_count": 22,
+          "text": "Gross margin was stable at 45 percent while subscription renewals improved versus the prior quarter."
+        }
+      ]
+    }
+  ],
   "cases": [
     {
-      "id": "qa_revenue_q4_grounded",
-      "workflow_type": "grounded_qa",
+      "id": "ask_revenue_q4",
+      "workflow_type": "ask",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4",
-        "source_filename": "acme_q4_report.txt",
-        "notes": "Seed grounded Q&A case for revenue question."
+        "reference_id": "acme_financial_report_2024_q4"
       },
       "input": {
-        "question": "What happened to revenue in Q4?"
+        "question": "What happened to revenue in Q4?",
+        "top_k": 5,
+        "min_similarity": 0.2
       },
-      "expected_behavior": "Answer should be grounded in document citations, or explicitly return insufficient evidence.",
+      "expected_behavior": "Returns a grounded answer with citations when supporting chunks exist.",
       "expected_fields": [
         "question",
         "answer",
         "status",
         "citations"
       ],
-      "expected_status": "answered"
+      "expected_status": "answered",
+      "expected_abstention": false
     },
     {
-      "id": "memo_acme_q4",
-      "workflow_type": "memo_generation",
+      "id": "memo_q4",
+      "workflow_type": "memo",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4",
-        "source_filename": "acme_q4_report.txt"
+        "reference_id": "acme_financial_report_2024_q4"
       },
       "input": {
-        "instruction": "Generate a grounded investment memo with key developments and risks."
+        "instruction": "Generate a grounded investment memo for this quarter.",
+        "top_k": 5,
+        "min_similarity": 0.2
       },
-      "expected_behavior": "Return a memo payload grounded by citations or insufficient evidence when retrieval is weak.",
+      "expected_behavior": "Returns generated memo with evidence citations.",
       "expected_fields": [
+        "document_id",
         "status",
         "memo"
       ],
-      "expected_status": "generated"
+      "expected_status": "generated",
+      "expected_abstention": false
     },
     {
-      "id": "kpis_acme_q4",
-      "workflow_type": "kpi_extraction",
+      "id": "extract_kpis_q4",
+      "workflow_type": "extract_kpis",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4",
-        "source_filename": "acme_q4_report.txt"
+        "reference_id": "acme_financial_report_2024_q4"
       },
       "input": {
-        "instruction": "Extract decision-relevant KPIs from the document."
+        "instruction": "Extract the most decision-relevant KPIs.",
+        "top_k": 5,
+        "min_similarity": 0.2
       },
-      "expected_behavior": "Return KPI list with citation-backed items or insufficient evidence.",
+      "expected_behavior": "Returns KPI list with citation-backed evidence.",
       "expected_fields": [
+        "workflow",
+        "document_id",
         "status",
         "kpis",
         "evidence"
       ],
-      "expected_status": "completed"
+      "expected_status": "completed",
+      "expected_abstention": false
     },
     {
-      "id": "risks_acme_q4",
-      "workflow_type": "risk_extraction",
+      "id": "extract_risks_q4",
+      "workflow_type": "extract_risks",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4",
-        "source_filename": "acme_q4_report.txt"
+        "reference_id": "acme_financial_report_2024_q4"
       },
       "input": {
-        "instruction": "Extract material risks and their severity."
+        "instruction": "Extract material risks and severity.",
+        "top_k": 5,
+        "min_similarity": 0.2
       },
-      "expected_behavior": "Return risk list with evidence citations or insufficient evidence.",
+      "expected_behavior": "Returns risk list with citation-backed evidence.",
       "expected_fields": [
+        "workflow",
+        "document_id",
         "status",
         "risks",
         "evidence"
       ],
-      "expected_status": "completed"
+      "expected_status": "completed",
+      "expected_abstention": false
     },
     {
-      "id": "timeline_acme_q4",
-      "workflow_type": "timeline_building",
+      "id": "timeline_q4",
+      "workflow_type": "timeline",
       "document_reference": {
-        "reference_id": "acme_financial_report_2024_q4",
-        "source_filename": "acme_q4_report.txt"
+        "reference_id": "acme_financial_report_2024_q4"
       },
       "input": {
-        "instruction": "Build a concise timeline of key events in the quarter."
+        "instruction": "Build a concise timeline of key events.",
+        "top_k": 5,
+        "min_similarity": 0.2
       },
-      "expected_behavior": "Return timeline events grounded by citations or insufficient evidence.",
+      "expected_behavior": "Returns timeline events with citation-backed evidence.",
       "expected_fields": [
+        "workflow",
+        "document_id",
         "status",
         "events",
         "evidence"
       ],
-      "expected_status": "completed"
+      "expected_status": "completed",
+      "expected_abstention": false
     }
   ]
 }
