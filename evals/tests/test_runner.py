@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from evals.runner import (
     load_dataset,
     run_eval_dataset,
@@ -100,3 +103,29 @@ def test_write_reports_create_json_and_markdown_outputs(tmp_path: Path) -> None:
     assert len(json_payload["results"]) == len(dataset.cases)
     assert "# Eval Report" in markdown_payload
     assert "| case_id | workflow | status | http |" in markdown_payload
+
+
+def test_load_dataset_rejects_unknown_document_reference(tmp_path: Path) -> None:
+    seed_payload = json.loads(SEED_DATASET_PATH.read_text(encoding="utf-8"))
+    seed_payload["cases"][0]["document_reference"]["reference_id"] = "unknown_reference"
+    invalid_dataset_path = tmp_path / "invalid_dataset.json"
+    invalid_dataset_path.write_text(json.dumps(seed_payload), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        load_dataset(invalid_dataset_path)
+
+
+def test_markdown_report_includes_failure_notes(tmp_path: Path) -> None:
+    dataset = load_dataset(SEED_DATASET_PATH)
+
+    first_case = dataset.cases[0].model_copy(update={"expected_status": "insufficient_evidence"})
+    modified_dataset = dataset.model_copy(update={"cases": [first_case, *dataset.cases[1:]]})
+    report = run_eval_dataset(modified_dataset)
+
+    markdown_path = tmp_path / "eval_report_failed.md"
+    write_markdown_report(report, markdown_path)
+
+    markdown_payload = markdown_path.read_text(encoding="utf-8")
+    assert "## Notes" in markdown_payload
+    assert first_case.id in markdown_payload
+    assert "Expected status" in markdown_payload

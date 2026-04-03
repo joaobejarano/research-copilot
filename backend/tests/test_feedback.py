@@ -86,6 +86,28 @@ def test_create_feedback_requires_reason_for_negative_value() -> None:
     assert "reason is required when feedback_value is negative" in str(response.json())
 
 
+def test_create_negative_feedback_with_reason_persists() -> None:
+    document_id = _seed_document()
+
+    response = _post_feedback(
+        {
+            "workflow_type": "ask",
+            "document_id": document_id,
+            "target_reference": "ask:answered:What happened to revenue in Q4?",
+            "feedback_value": "negative",
+            "reason": "Answer did not address cited risk details.",
+            "reviewer_note": "Need clearer risk grounding.",
+        }
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["workflow_type"] == "ask"
+    assert payload["feedback_value"] == "negative"
+    assert payload["reason"] == "Answer did not address cited risk details."
+    assert payload["reviewer_note"] == "Need clearer risk grounding."
+
+
 def test_create_feedback_returns_404_for_missing_document() -> None:
     response = _post_feedback(
         {
@@ -157,3 +179,9 @@ def test_list_feedback_returns_feedback_and_supports_filters() -> None:
     assert len(filtered_negative_payload) == 1
     assert filtered_negative_payload[0]["feedback_value"] == "negative"
     assert filtered_negative_payload[0]["reason"] == "Missing FX risk context."
+
+    limited_feedback = _get_feedback("/feedback?limit=2")
+    assert limited_feedback.status_code == 200
+    limited_payload = limited_feedback.json()
+    assert len(limited_payload) == 2
+    assert limited_payload[0]["id"] > limited_payload[1]["id"]
