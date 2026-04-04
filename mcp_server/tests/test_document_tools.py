@@ -161,6 +161,30 @@ def test_request_backend_json_maps_document_not_ready_to_structured_error(
     assert exc_info.value.payload.details["status_code"] == 400
 
 
+def test_request_backend_json_maps_document_not_found_to_structured_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_request(**kwargs: Any) -> httpx.Response:
+        request = httpx.Request("GET", "http://127.0.0.1:8000/documents/999/chunks")
+        return httpx.Response(
+            status_code=404,
+            json={"detail": "Document not found."},
+            request=request,
+        )
+
+    monkeypatch.setattr(document_tools.httpx, "request", fake_request)
+
+    with pytest.raises(MCPToolError) as exc_info:
+        document_tools._request_backend_json(
+            base_url="http://127.0.0.1:8000",
+            path="/documents/999/chunks",
+        )
+
+    assert exc_info.value.payload.code == "document_not_found"
+    assert exc_info.value.payload.retryable is False
+    assert exc_info.value.payload.details["status_code"] == 404
+
+
 def test_request_backend_json_maps_connection_failures_to_retryable_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -180,6 +204,38 @@ def test_request_backend_json_maps_connection_failures_to_retryable_error(
 
     assert exc_info.value.payload.code == "backend_unreachable"
     assert exc_info.value.payload.retryable is True
+
+
+def test_request_backend_json_maps_generic_backend_error_to_structured_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_request(**kwargs: Any) -> httpx.Response:
+        request = httpx.Request("POST", "http://127.0.0.1:8000/documents/4/memo")
+        return httpx.Response(
+            status_code=500,
+            json={"detail": "Unexpected workflow service failure."},
+            request=request,
+        )
+
+    monkeypatch.setattr(document_tools.httpx, "request", fake_request)
+
+    with pytest.raises(MCPToolError) as exc_info:
+        document_tools._request_backend_json(
+            base_url="http://127.0.0.1:8000",
+            path="/documents/4/memo",
+            method="POST",
+        )
+
+    assert exc_info.value.payload.code == "backend_request_failed"
+    assert exc_info.value.payload.details["status_code"] == 500
+
+
+def test_search_documents_from_backend_rejects_invalid_limit() -> None:
+    with pytest.raises(MCPToolError) as exc_info:
+        document_tools.search_documents_from_backend(settings=_settings(), limit=0)
+
+    assert exc_info.value.payload.code == "invalid_limit"
+    assert exc_info.value.payload.details == {"limit": 0}
 
 
 def test_registered_document_tool_invalid_document_id_returns_structured_error() -> None:

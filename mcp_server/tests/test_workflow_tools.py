@@ -126,6 +126,50 @@ def test_generate_memo_from_backend_rejects_invalid_document_id() -> None:
     assert exc_info.value.payload.code == "invalid_document_id"
 
 
+def test_ask_document_from_backend_forwards_retrieval_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request_backend_json(
+        *,
+        base_url: str,
+        path: str,
+        method: str = "GET",
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        captured["base_url"] = base_url
+        captured["path"] = path
+        captured["method"] = method
+        captured["body"] = body
+        return {
+            "question": "What changed in revenue in Q4?",
+            "answer": "Revenue increased 12 percent in Q4.",
+            "status": "answered",
+            "citations": [],
+        }
+
+    monkeypatch.setattr(workflow_tools, "_request_backend_json", fake_request_backend_json)
+
+    output = workflow_tools.ask_document_from_backend(
+        settings=_settings(),
+        document_id=11,
+        question="What changed in revenue in Q4?",
+        top_k=4,
+        min_similarity=0.25,
+    )
+
+    assert output.status == "answered"
+    assert captured["base_url"] == "http://127.0.0.1:8000"
+    assert captured["path"] == "/documents/11/ask"
+    assert captured["method"] == "POST"
+    assert captured["body"] == {
+        "question": "What changed in revenue in Q4?",
+        "top_k": 4,
+        "min_similarity": 0.25,
+    }
+
+
 def test_registered_workflow_tool_invalid_document_id_returns_structured_error() -> None:
     server = create_mcp_server(_settings())
 
