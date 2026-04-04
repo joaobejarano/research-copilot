@@ -53,6 +53,7 @@ RETRIEVAL_MIN_SIMILARITY = float(os.getenv("RETRIEVAL_MIN_SIMILARITY", "0.2"))
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 MAX_WORKFLOW_CITATIONS = int(os.getenv("MAX_WORKFLOW_CITATIONS", "6"))
 MAX_WORKFLOW_ITEMS = int(os.getenv("MAX_WORKFLOW_ITEMS", "10"))
 
