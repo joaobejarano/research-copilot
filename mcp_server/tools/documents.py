@@ -96,8 +96,22 @@ def _extract_error_detail(response: httpx.Response) -> str:
     return text or response.reason_phrase
 
 
-def _request_backend_json(*, base_url: str, path: str) -> dict[str, Any] | list[Any]:
-    response = httpx.get(f"{base_url}{path}", timeout=20.0)
+def _request_backend_json(
+    *,
+    base_url: str,
+    path: str,
+    method: str = "GET",
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any] | list[Any]:
+    request_kwargs: dict[str, Any] = {
+        "method": method,
+        "url": f"{base_url}{path}",
+        "timeout": 20.0,
+    }
+    if body is not None:
+        request_kwargs["json"] = body
+
+    response = httpx.request(**request_kwargs)
     if response.status_code >= 400:
         detail = _extract_error_detail(response)
         raise ValueError(f"Backend request failed ({response.status_code}) for {path}: {detail}")
