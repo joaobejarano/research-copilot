@@ -2,6 +2,14 @@ import { requestJson } from "./client";
 import type {
   AskGroundedQuestionRequestModel,
   AskGroundedQuestionResponseModel,
+  BuildTimelineRequestModel,
+  BuildTimelineResponseModel,
+  ExtractKpisRequestModel,
+  ExtractKpisResponseModel,
+  ExtractRisksRequestModel,
+  ExtractRisksResponseModel,
+  GenerateMemoRequestModel,
+  GenerateMemoResponseModel,
   GetDocumentChunksRequestModel,
   GetDocumentChunksResponseModel,
   GetDocumentDetailRequestModel,
@@ -50,5 +58,37 @@ export async function askGroundedQuestion(
   return requestJson<AskGroundedQuestionResponseModel>(`/documents/${documentId}/ask`, {
     method: "POST",
     body
+  });
+}
+
+export async function generateMemo(
+  request: GenerateMemoRequestModel
+): Promise<GenerateMemoResponseModel> {
+  return requestJson<GenerateMemoResponseModel>(`/documents/${request.documentId}/memo`, {
+    method: "POST"
+  });
+}
+
+export async function extractKpis(
+  request: ExtractKpisRequestModel
+): Promise<ExtractKpisResponseModel> {
+  return requestJson<ExtractKpisResponseModel>(`/documents/${request.documentId}/extract/kpis`, {
+    method: "POST"
+  });
+}
+
+export async function extractRisks(
+  request: ExtractRisksRequestModel
+): Promise<ExtractRisksResponseModel> {
+  return requestJson<ExtractRisksResponseModel>(`/documents/${request.documentId}/extract/risks`, {
+    method: "POST"
+  });
+}
+
+export async function buildTimeline(
+  request: BuildTimelineRequestModel
+): Promise<BuildTimelineResponseModel> {
+  return requestJson<BuildTimelineResponseModel>(`/documents/${request.documentId}/timeline`, {
+    method: "POST"
   });
 }

@@ -71,3 +71,93 @@ export interface AskGroundedQuestionResponseModel {
   status: "answered" | "insufficient_evidence";
   citations: GroundedCitationModel[];
 }
+
+export interface GenerateMemoRequestModel {
+  documentId: number;
+}
+
+export interface MemoCitationsBySectionModel {
+  company_overview: string[];
+  key_developments: string[];
+  risks: string[];
+  catalysts: string[];
+  kpis: string[];
+  open_questions: string[];
+}
+
+export interface MemoDraftModel {
+  company_overview: string;
+  key_developments: string[];
+  risks: string[];
+  catalysts: string[];
+  kpis: string[];
+  open_questions: string[];
+  citations_by_section: MemoCitationsBySectionModel;
+}
+
+export interface GenerateMemoResponseModel {
+  document_id: number;
+  status: "generated" | "insufficient_evidence";
+  memo: MemoDraftModel | null;
+}
+
+export interface WorkflowEvidenceModel {
+  citations: GroundedCitationModel[];
+}
+
+export interface ExtractKpisRequestModel {
+  documentId: number;
+}
+
+export interface KpiItemModel {
+  name: string;
+  value: string;
+  unit: string | null;
+  period: string | null;
+  citation: string;
+}
+
+export interface ExtractKpisResponseModel {
+  workflow: "kpi_extraction";
+  document_id: number;
+  status: "completed" | "insufficient_evidence";
+  kpis: KpiItemModel[];
+  evidence: WorkflowEvidenceModel;
+}
+
+export interface ExtractRisksRequestModel {
+  documentId: number;
+}
+
+export interface RiskItemModel {
+  title: string;
+  description: string;
+  severity_or_materiality: "low" | "medium" | "high" | "critical" | "unknown";
+  citation: string;
+}
+
+export interface ExtractRisksResponseModel {
+  workflow: "risk_extraction";
+  document_id: number;
+  status: "completed" | "insufficient_evidence";
+  risks: RiskItemModel[];
+  evidence: WorkflowEvidenceModel;
+}
+
+export interface BuildTimelineRequestModel {
+  documentId: number;
+}
+
+export interface TimelineEventModel {
+  event_date_or_period: string;
+  event_summary: string;
+  citation: string;
+}
+
+export interface BuildTimelineResponseModel {
+  workflow: "timeline_building";
+  document_id: number;
+  status: "completed" | "insufficient_evidence";
+  events: TimelineEventModel[];
+  evidence: WorkflowEvidenceModel;
+}

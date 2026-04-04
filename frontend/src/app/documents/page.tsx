@@ -1,78 +1,66 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useEffect, useState } from "react";
-import { ApiClientError } from "../../lib/api/client";
+import { type FormEvent, type SyntheticEvent, useEffect, useState } from "react";
 import { createFeedback, listFeedback } from "../../lib/api/feedback";
 import {
   askGroundedQuestion,
+  buildTimeline,
+  extractKpis,
+  extractRisks,
+  generateMemo,
   getDocumentChunks,
   getDocumentDetail,
   listDocuments,
-  processDocument
+  processDocument,
 } from "../../lib/api/documents";
 import type {
-  AskGroundedQuestionResponseModel,
   DocumentChunkModel,
   DocumentStatusModel,
-  GetDocumentDetailResponseModel
+  GetDocumentDetailResponseModel,
 } from "../../lib/api/models/documents";
-import type { FeedbackRecordModel, FeedbackValue } from "../../lib/api/models/feedback";
-
-function formatCreatedAt(createdAt: string): string {
-  const parsedDate = new Date(createdAt);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return createdAt;
-  }
-  return parsedDate.toLocaleString();
-}
-
-function buildAskTargetReference(askResult: AskGroundedQuestionResponseModel): string {
-  const normalizedQuestion = askResult.question.trim().replace(/\s+/g, " ").slice(0, 180);
-  return `ask:${askResult.status}:${normalizedQuestion}`;
-}
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof ApiClientError) {
-    return error.detail;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "Unknown error.";
-}
-
-function replaceDocumentInList(
-  currentDocuments: DocumentStatusModel[],
-  nextDocument: DocumentStatusModel
-): DocumentStatusModel[] {
-  return currentDocuments.map((document) =>
-    document.id === nextDocument.id ? nextDocument : document
-  );
-}
+import type { FeedbackRecordModel, FeedbackValue, FeedbackWorkflowType } from "../../lib/api/models/feedback";
+import { AdvancedPanel } from "./_components/AdvancedPanel";
+import { DocumentHeader } from "./_components/DocumentHeader";
+import { DocumentList } from "./_components/DocumentList";
+import { FeedbackPanel } from "./_components/FeedbackPanel";
+import { ResearchActionsPanel } from "./_components/ResearchActionsPanel";
+import { ResultPanel } from "./_components/ResultPanel";
+import {
+  buildResultTargetReference,
+  replaceDocumentInList,
+  toErrorMessage,
+  type ResearchActionResult,
+  type ResearchActionType,
+} from "./_components/shared";
 
 export default function DocumentsPage() {
   const [documents, setDocuments] = useState<DocumentStatusModel[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const [selectedDocumentDetail, setSelectedDocumentDetail] =
     useState<GetDocumentDetailResponseModel | null>(null);
   const [isDetailLoading, setIsDetailLoading] = useState<boolean>(false);
   const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
+
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [processingErrorMessage, setProcessingErrorMessage] = useState<string | null>(null);
   const [processingStatusMessage, setProcessingStatusMessage] = useState<string | null>(null);
-  const [lastProcessedDocumentId, setLastProcessedDocumentId] = useState<number | null>(null);
-  const [lastProcessChunkCount, setLastProcessChunkCount] = useState<number | null>(null);
+
+  const [activeAction, setActiveAction] = useState<ResearchActionType>("ask");
+  const [questionInput, setQuestionInput] = useState<string>("");
+  const [isActionLoading, setIsActionLoading] = useState<boolean>(false);
+  const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
+  const [actionResult, setActionResult] = useState<ResearchActionResult | null>(null);
+
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
   const [documentChunks, setDocumentChunks] = useState<DocumentChunkModel[]>([]);
   const [chunksCountFromApi, setChunksCountFromApi] = useState<number | null>(null);
   const [isChunksLoading, setIsChunksLoading] = useState<boolean>(false);
   const [chunksErrorMessage, setChunksErrorMessage] = useState<string | null>(null);
-  const [questionInput, setQuestionInput] = useState<string>("");
-  const [isAskingQuestion, setIsAskingQuestion] = useState<boolean>(false);
-  const [askErrorMessage, setAskErrorMessage] = useState<string | null>(null);
-  const [askResult, setAskResult] = useState<AskGroundedQuestionResponseModel | null>(null);
+
   const [feedbackValue, setFeedbackValue] = useState<FeedbackValue>("positive");
   const [feedbackReason, setFeedbackReason] = useState<string>("");
   const [feedbackReviewerNote, setFeedbackReviewerNote] = useState<string>("");
@@ -91,9 +79,7 @@ export default function DocumentsPage() {
       const fetchedDocuments = await listDocuments();
       setDocuments(fetchedDocuments);
       setSelectedDocumentId((currentSelection) => {
-        if (fetchedDocuments.length === 0) {
-          return null;
-        }
+        if (fetchedDocuments.length === 0) return null;
         if (
           currentSelection !== null &&
           fetchedDocuments.some((document) => document.id === currentSelection)
@@ -120,16 +106,19 @@ export default function DocumentsPage() {
       setDetailErrorMessage(null);
       setProcessingErrorMessage(null);
       setProcessingStatusMessage(null);
-      setLastProcessedDocumentId(null);
-      setLastProcessChunkCount(null);
+
+      setActiveAction("ask");
+      setQuestionInput("");
+      setIsActionLoading(false);
+      setActionErrorMessage(null);
+      setActionResult(null);
+
+      setIsAdvancedOpen(false);
       setDocumentChunks([]);
       setChunksCountFromApi(null);
       setIsChunksLoading(false);
       setChunksErrorMessage(null);
-      setQuestionInput("");
-      setIsAskingQuestion(false);
-      setAskErrorMessage(null);
-      setAskResult(null);
+
       setFeedbackValue("positive");
       setFeedbackReason("");
       setFeedbackReviewerNote("");
@@ -148,62 +137,20 @@ export default function DocumentsPage() {
     async function loadSelectedDocumentDetail(): Promise<void> {
       setIsDetailLoading(true);
       setDetailErrorMessage(null);
+      setSelectedDocumentDetail(null);
       setProcessingErrorMessage(null);
       setProcessingStatusMessage(null);
-      setLastProcessedDocumentId(null);
-      setLastProcessChunkCount(null);
-      setSelectedDocumentDetail(null);
 
       try {
         const fetchedDetail = await getDocumentDetail({ documentId });
-        if (isCancelled) {
-          return;
-        }
+        if (isCancelled) return;
         setSelectedDocumentDetail(fetchedDetail);
         setDocuments((currentDocuments) => replaceDocumentInList(currentDocuments, fetchedDetail));
       } catch (error) {
-        if (isCancelled) {
-          return;
-        }
+        if (isCancelled) return;
         setDetailErrorMessage(toErrorMessage(error));
       } finally {
-        if (!isCancelled) {
-          setIsDetailLoading(false);
-        }
-      }
-    }
-
-    async function loadSelectedDocumentChunks(): Promise<void> {
-      setIsChunksLoading(true);
-      setChunksErrorMessage(null);
-      setDocumentChunks([]);
-      setChunksCountFromApi(null);
-      setQuestionInput("");
-      setIsAskingQuestion(false);
-      setAskErrorMessage(null);
-      setAskResult(null);
-
-      try {
-        const chunksResponse = await getDocumentChunks({ documentId });
-        if (isCancelled) {
-          return;
-        }
-
-        const orderedChunks = [...chunksResponse.chunks].sort(
-          (leftChunk, rightChunk) => leftChunk.chunk_index - rightChunk.chunk_index
-        );
-
-        setDocumentChunks(orderedChunks);
-        setChunksCountFromApi(chunksResponse.chunk_count);
-      } catch (error) {
-        if (isCancelled) {
-          return;
-        }
-        setChunksErrorMessage(toErrorMessage(error));
-      } finally {
-        if (!isCancelled) {
-          setIsChunksLoading(false);
-        }
+        if (!isCancelled) setIsDetailLoading(false);
       }
     }
 
@@ -220,24 +167,29 @@ export default function DocumentsPage() {
 
       try {
         const feedbackResponse = await listFeedback({ document_id: documentId, limit: 10 });
-        if (isCancelled) {
-          return;
-        }
+        if (isCancelled) return;
         setFeedbackRecords(feedbackResponse);
       } catch (error) {
-        if (isCancelled) {
-          return;
-        }
+        if (isCancelled) return;
         setFeedbackLoadErrorMessage(toErrorMessage(error));
       } finally {
-        if (!isCancelled) {
-          setIsFeedbackLoading(false);
-        }
+        if (!isCancelled) setIsFeedbackLoading(false);
       }
     }
 
+    setActiveAction("ask");
+    setQuestionInput("");
+    setIsActionLoading(false);
+    setActionErrorMessage(null);
+    setActionResult(null);
+
+    setIsAdvancedOpen(false);
+    setDocumentChunks([]);
+    setChunksCountFromApi(null);
+    setIsChunksLoading(false);
+    setChunksErrorMessage(null);
+
     void loadSelectedDocumentDetail();
-    void loadSelectedDocumentChunks();
     void loadSelectedDocumentFeedback();
 
     return () => {
@@ -246,9 +198,7 @@ export default function DocumentsPage() {
   }, [selectedDocumentId]);
 
   async function refreshSelectedDocumentDetail(): Promise<void> {
-    if (selectedDocumentId === null) {
-      return;
-    }
+    if (selectedDocumentId === null) return;
 
     setIsDetailLoading(true);
     setDetailErrorMessage(null);
@@ -266,9 +216,7 @@ export default function DocumentsPage() {
   }
 
   async function refreshSelectedDocumentChunks(): Promise<void> {
-    if (selectedDocumentId === null) {
-      return;
-    }
+    if (selectedDocumentId === null) return;
 
     setIsChunksLoading(true);
     setChunksErrorMessage(null);
@@ -276,7 +224,7 @@ export default function DocumentsPage() {
     try {
       const chunksResponse = await getDocumentChunks({ documentId: selectedDocumentId });
       const orderedChunks = [...chunksResponse.chunks].sort(
-        (leftChunk, rightChunk) => leftChunk.chunk_index - rightChunk.chunk_index
+        (a, b) => a.chunk_index - b.chunk_index
       );
       setDocumentChunks(orderedChunks);
       setChunksCountFromApi(chunksResponse.chunk_count);
@@ -290,9 +238,7 @@ export default function DocumentsPage() {
   }
 
   async function refreshSelectedDocumentFeedback(): Promise<void> {
-    if (selectedDocumentId === null) {
-      return;
-    }
+    if (selectedDocumentId === null) return;
 
     setIsFeedbackLoading(true);
     setFeedbackLoadErrorMessage(null);
@@ -309,9 +255,7 @@ export default function DocumentsPage() {
   }
 
   async function handleProcessDocument(): Promise<void> {
-    if (!selectedDocumentDetail || isProcessing) {
-      return;
-    }
+    if (!selectedDocumentDetail || isProcessing) return;
 
     const documentId = selectedDocumentDetail.id;
     const previousStatus = selectedDocumentDetail.status;
@@ -319,8 +263,6 @@ export default function DocumentsPage() {
     setIsProcessing(true);
     setProcessingErrorMessage(null);
     setProcessingStatusMessage(`Status transition: ${previousStatus} -> processing`);
-    setLastProcessedDocumentId(null);
-    setLastProcessChunkCount(null);
 
     setSelectedDocumentDetail((currentDetail) =>
       currentDetail && currentDetail.id === documentId
@@ -338,13 +280,23 @@ export default function DocumentsPage() {
       setProcessingStatusMessage(
         `Status transition: ${previousStatus} -> processing -> ${processResult.status}`
       );
-      setLastProcessedDocumentId(processResult.document_id);
-      setLastProcessChunkCount(processResult.chunk_count);
 
       const refreshedDetail = await getDocumentDetail({ documentId });
       setSelectedDocumentDetail(refreshedDetail);
       setDocuments((currentDocuments) => replaceDocumentInList(currentDocuments, refreshedDetail));
-      await refreshSelectedDocumentChunks();
+
+      setActionErrorMessage(null);
+      setActionResult(null);
+      setFeedbackSubmitErrorMessage(null);
+      setFeedbackSubmitStatusMessage(null);
+
+      setDocumentChunks([]);
+      setChunksCountFromApi(null);
+      setChunksErrorMessage(null);
+
+      if (isAdvancedOpen) {
+        await refreshSelectedDocumentChunks();
+      }
     } catch (error) {
       setProcessingErrorMessage(toErrorMessage(error));
       setProcessingStatusMessage(`Status transition: ${previousStatus} -> processing -> failed`);
@@ -352,65 +304,96 @@ export default function DocumentsPage() {
       try {
         const refreshedDetail = await getDocumentDetail({ documentId });
         setSelectedDocumentDetail(refreshedDetail);
-        setDocuments((currentDocuments) =>
-          replaceDocumentInList(currentDocuments, refreshedDetail)
-        );
+        setDocuments((currentDocuments) => replaceDocumentInList(currentDocuments, refreshedDetail));
       } catch {
-        // Keep the last known detail when refresh fails after processing.
+        // Keep last known detail when refresh fails.
       }
-
-      await refreshSelectedDocumentChunks();
     } finally {
       setIsProcessing(false);
     }
   }
 
-  async function handleAskQuestion(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  async function executeResearchAction(action: ResearchActionType): Promise<void> {
+    if (selectedDocumentId === null || isActionLoading) return;
 
-    if (selectedDocumentId === null || isAskingQuestion) {
+    if (selectedDocumentDetail?.status !== "ready") {
+      setActionErrorMessage("Document must be ready before running research actions.");
       return;
     }
 
-    const normalizedQuestion = questionInput.trim();
-    if (normalizedQuestion.length === 0) {
-      setAskErrorMessage("Question is required.");
-      return;
-    }
-
-    setIsAskingQuestion(true);
-    setAskErrorMessage(null);
+    setIsActionLoading(true);
+    setActionErrorMessage(null);
 
     try {
-      const askResponse = await askGroundedQuestion({
-        documentId: selectedDocumentId,
-        question: normalizedQuestion
-      });
-      setAskResult(askResponse);
+      let nextResult: ResearchActionResult;
+
+      if (action === "ask") {
+        const normalizedQuestion = questionInput.trim();
+        if (normalizedQuestion.length === 0) {
+          setActionErrorMessage("Question is required for Ask.");
+          return;
+        }
+        nextResult = {
+          action: "ask",
+          response: await askGroundedQuestion({
+            documentId: selectedDocumentId,
+            question: normalizedQuestion,
+          }),
+        };
+      } else if (action === "memo") {
+        nextResult = {
+          action: "memo",
+          response: await generateMemo({ documentId: selectedDocumentId }),
+        };
+      } else if (action === "extract_kpis") {
+        nextResult = {
+          action: "extract_kpis",
+          response: await extractKpis({ documentId: selectedDocumentId }),
+        };
+      } else if (action === "extract_risks") {
+        nextResult = {
+          action: "extract_risks",
+          response: await extractRisks({ documentId: selectedDocumentId }),
+        };
+      } else {
+        nextResult = {
+          action: "timeline",
+          response: await buildTimeline({ documentId: selectedDocumentId }),
+        };
+      }
+
+      setActionResult(nextResult);
       setFeedbackValue("positive");
       setFeedbackReason("");
       setFeedbackReviewerNote("");
       setFeedbackSubmitErrorMessage(null);
       setFeedbackSubmitStatusMessage(null);
     } catch (error) {
-      setAskResult(null);
-      setAskErrorMessage(toErrorMessage(error));
+      setActionResult(null);
+      setActionErrorMessage(toErrorMessage(error));
     } finally {
-      setIsAskingQuestion(false);
+      setIsActionLoading(false);
     }
+  }
+
+  async function handleAskSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (activeAction !== "ask") return;
+    await executeResearchAction("ask");
+  }
+
+  async function handleRunActionButton(): Promise<void> {
+    if (activeAction === "ask") return;
+    await executeResearchAction(activeAction);
   }
 
   async function handleSubmitFeedback(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
 
-    if (selectedDocumentId === null || isSubmittingFeedback) {
-      return;
-    }
+    if (selectedDocumentId === null || isSubmittingFeedback) return;
 
-    if (askResult === null) {
-      setFeedbackSubmitErrorMessage(
-        "Run grounded Q&A first so feedback can be linked to an output."
-      );
+    if (actionResult === null) {
+      setFeedbackSubmitErrorMessage("Run a research action first so feedback can be linked.");
       setFeedbackSubmitStatusMessage(null);
       return;
     }
@@ -430,12 +413,12 @@ export default function DocumentsPage() {
 
     try {
       await createFeedback({
-        workflow_type: "ask",
+        workflow_type: actionResult.action as FeedbackWorkflowType,
         document_id: selectedDocumentId,
-        target_reference: buildAskTargetReference(askResult),
+        target_reference: buildResultTargetReference(actionResult),
         feedback_value: feedbackValue,
         reason: feedbackValue === "negative" ? normalizedReason : undefined,
-        reviewer_note: normalizedReviewerNote.length > 0 ? normalizedReviewerNote : undefined
+        reviewer_note: normalizedReviewerNote.length > 0 ? normalizedReviewerNote : undefined,
       });
 
       setFeedbackReason("");
@@ -449,27 +432,48 @@ export default function DocumentsPage() {
     }
   }
 
-  const shouldShowChunkCount =
-    selectedDocumentDetail !== null &&
-    lastProcessedDocumentId === selectedDocumentDetail.id &&
-    lastProcessChunkCount !== null;
-  const readyDocumentsCount = documents.filter((document) => document.status === "ready").length;
+  function handleAdvancedToggle(event: SyntheticEvent<HTMLDetailsElement>): void {
+    const nextOpen = event.currentTarget.open;
+    setIsAdvancedOpen(nextOpen);
+
+    if (
+      nextOpen &&
+      selectedDocumentId !== null &&
+      !isChunksLoading &&
+      documentChunks.length === 0 &&
+      chunksErrorMessage === null
+    ) {
+      void refreshSelectedDocumentChunks();
+    }
+  }
+
   const selectedDocumentSummary =
     selectedDocumentId === null
       ? null
-      : documents.find((document) => document.id === selectedDocumentId) ?? null;
+      : documents.find((doc) => doc.id === selectedDocumentId) ?? null;
+
+  const selectedStatus =
+    selectedDocumentDetail?.status ?? selectedDocumentSummary?.status ?? "unknown";
+  const readyDocumentsCount = documents.filter((doc) => doc.status === "ready").length;
+  const isDocumentReady = selectedStatus === "ready";
+  const canRunActions =
+    selectedDocumentDetail !== null &&
+    isDocumentReady &&
+    !isActionLoading &&
+    !isDetailLoading &&
+    !isProcessing;
 
   return (
     <main className="container dashboard-container">
       <header className="dashboard-header">
         <div>
-          <h1>Documents</h1>
-          <p>Analyst dashboard document list.</p>
+          <h1>Research workspace</h1>
+          <p>Select a document, run a research action, review grounded output, and submit feedback.</p>
         </div>
         <Link href="/">Back to home</Link>
       </header>
 
-      <section className="dashboard-summary">
+      <section className="dashboard-summary workspace-summary">
         <article className="summary-card">
           <p className="summary-label">documents</p>
           <p className="summary-value">{documents.length}</p>
@@ -489,7 +493,7 @@ export default function DocumentsPage() {
       {isLoading ? (
         <section className="state-panel">
           <p className="state-title">Loading documents...</p>
-          <p>Fetching dashboard data from the API.</p>
+          <p>Fetching workspace data from the API.</p>
         </section>
       ) : null}
 
@@ -505,22 +509,29 @@ export default function DocumentsPage() {
       {!isLoading && !errorMessage && documents.length === 0 ? (
         <section className="state-panel">
           <p className="state-title">No documents yet</p>
-          <p>Upload a document through the API to start inspecting details, chunks, and grounded Q&A.</p>
+          <p>Upload a document through the API to start this workspace flow.</p>
         </section>
       ) : null}
 
       {!isLoading && !errorMessage && documents.length > 0 ? (
         <>
-          <section className="document-detail-panel">
-            <h2>Document detail</h2>
-            <p className="section-note">
-              Select a document to inspect metadata, processing status, grounded Q&A, and chunks.
-            </p>
+          <DocumentList
+            documents={documents}
+            selectedDocumentId={selectedDocumentId}
+            isProcessing={isProcessing}
+            onSelect={setSelectedDocumentId}
+          />
+
+          <section className="workspace-panel">
+            <div className="section-header-row">
+              <h2>2. Document status and workspace</h2>
+              <p>Process if needed, then run research actions.</p>
+            </div>
 
             {selectedDocumentId === null ? (
               <section className="state-panel compact">
                 <p className="state-title">No document selected</p>
-                <p>Choose a row from the documents table below.</p>
+                <p>Select a document above to continue.</p>
               </section>
             ) : null}
 
@@ -546,455 +557,68 @@ export default function DocumentsPage() {
             !detailErrorMessage &&
             selectedDocumentDetail ? (
               <>
-                <dl className="document-detail-grid">
-                  <div className="document-detail-item">
-                    <dt>id</dt>
-                    <dd>{selectedDocumentDetail.id}</dd>
-                  </div>
-                  <div className="document-detail-item">
-                    <dt>company_name</dt>
-                    <dd>{selectedDocumentDetail.company_name}</dd>
-                  </div>
-                  <div className="document-detail-item">
-                    <dt>document_type</dt>
-                    <dd>{selectedDocumentDetail.document_type}</dd>
-                  </div>
-                  <div className="document-detail-item">
-                    <dt>period</dt>
-                    <dd>{selectedDocumentDetail.period}</dd>
-                  </div>
-                  <div className="document-detail-item">
-                    <dt>source_filename</dt>
-                    <dd>{selectedDocumentDetail.source_filename}</dd>
-                  </div>
-                  <div className="document-detail-item">
-                    <dt>storage_path</dt>
-                    <dd>{selectedDocumentDetail.storage_path}</dd>
-                  </div>
-                  <div className="document-detail-item">
-                    <dt>status</dt>
-                    <dd>{selectedDocumentDetail.status}</dd>
-                  </div>
-                  <div className="document-detail-item">
-                    <dt>created_at</dt>
-                    <dd title={selectedDocumentDetail.created_at}>
-                      {formatCreatedAt(selectedDocumentDetail.created_at)}
-                    </dd>
-                  </div>
-                </dl>
-
-                <p className="status-transition">
-                  {processingStatusMessage ??
-                    `Current status: ${selectedDocumentDetail.status}`}
-                </p>
-
-                {shouldShowChunkCount ? (
-                  <p className="chunk-count-text">chunk_count: {lastProcessChunkCount}</p>
-                ) : null}
-
-                <div className="document-actions">
-                  {selectedDocumentDetail.status !== "ready" ? (
-                    <button
-                      type="button"
-                      className="button"
-                      onClick={() => void handleProcessDocument()}
-                      disabled={isProcessing}
-                    >
-                      {isProcessing ? "Processing..." : "Process document"}
-                    </button>
-                  ) : (
-                    <p className="ready-text">Document is ready.</p>
-                  )}
-
-                  <button
-                    type="button"
-                    className="button"
-                    onClick={() => void refreshSelectedDocumentDetail()}
-                    disabled={isProcessing || isDetailLoading}
-                  >
-                    Refresh detail
-                  </button>
-                </div>
-
-                {isProcessing ? <p className="processing-text">Processing document...</p> : null}
-
-                {processingErrorMessage ? (
-                  <section className="error-panel">
-                    <p>Document processing failed: {processingErrorMessage}</p>
-                  </section>
-                ) : null}
-
-                <section className="qa-section">
-                  <div className="qa-section-header">
-                    <h3>Grounded Q&A</h3>
-                  </div>
-
-                  <form className="qa-form" onSubmit={(event) => void handleAskQuestion(event)}>
-                    <label htmlFor="grounded-question-input" className="qa-label">
-                      Ask a question about this document
-                    </label>
-                    <textarea
-                      id="grounded-question-input"
-                      className="qa-input"
-                      value={questionInput}
-                      onChange={(event) => setQuestionInput(event.target.value)}
-                      placeholder="Example: What changed in revenue this quarter?"
-                      rows={3}
-                      disabled={isAskingQuestion || isProcessing || isDetailLoading}
-                    />
-                    <div className="qa-actions">
-                      <button
-                        type="submit"
-                        className="button"
-                        disabled={
-                          isAskingQuestion ||
-                          isProcessing ||
-                          isDetailLoading ||
-                          questionInput.trim().length === 0
-                        }
-                      >
-                        {isAskingQuestion ? "Asking..." : "Ask question"}
-                      </button>
-                    </div>
-                  </form>
-
-                  {isAskingQuestion ? <p>Generating grounded answer...</p> : null}
-
-                  {askErrorMessage ? (
-                    <section className="error-panel">
-                      <p>Grounded Q&A failed: {askErrorMessage}</p>
-                    </section>
-                  ) : null}
-
-                  {askResult ? (
-                    <section className="qa-result-card">
-                      <div className="qa-status-row">
-                        <span className="qa-status-label">status:</span>
-                        <span
-                          className={
-                            askResult.status === "answered"
-                              ? "qa-status-badge answered"
-                              : "qa-status-badge insufficient"
-                          }
-                        >
-                          {askResult.status}
-                        </span>
-                      </div>
-
-                      <div className="qa-result-block">
-                        <p className="qa-result-title">question</p>
-                        <p className="qa-result-text">{askResult.question}</p>
-                      </div>
-
-                      <div className="qa-result-block">
-                        <p className="qa-result-title">answer</p>
-                        <p className="qa-result-text">{askResult.answer}</p>
-                      </div>
-
-                      <div className="qa-result-block">
-                        <p className="qa-result-title">citations</p>
-                        {askResult.citations.length === 0 ? (
-                          <p className="qa-result-text">No citations returned.</p>
-                        ) : (
-                          <div className="citations-list">
-                            {[...askResult.citations]
-                              .sort((leftCitation, rightCitation) => leftCitation.rank - rightCitation.rank)
-                              .map((citation) => (
-                                <article key={citation.citation_id} className="citation-card">
-                                  <header className="citation-meta">
-                                    <span>{citation.citation_id}</span>
-                                    <span>rank: {citation.rank}</span>
-                                    <span>document_id: {citation.document_id}</span>
-                                    <span>chunk_index: {citation.chunk_index}</span>
-                                    <span>
-                                      page_number:{" "}
-                                      {citation.page_number === null ? "null" : citation.page_number}
-                                    </span>
-                                    <span>
-                                      retrieval_score: {citation.retrieval_score.toFixed(3)}
-                                    </span>
-                                  </header>
-                                  <div className="citation-text">{citation.text_excerpt}</div>
-                                </article>
-                              ))}
-                          </div>
-                        )}
-                      </div>
-                    </section>
-                  ) : !isAskingQuestion && !askErrorMessage ? (
-                    <p className="empty-hint">
-                      Submit a question to see a grounded answer with citations.
-                    </p>
-                  ) : null}
-                </section>
-
-                <section className="review-section">
-                  <div className="review-section-header">
-                    <h3>Human review</h3>
-                    <button
-                      type="button"
-                      className="button"
-                      onClick={() => void refreshSelectedDocumentFeedback()}
-                      disabled={isFeedbackLoading || isSubmittingFeedback}
-                    >
-                      {isFeedbackLoading ? "Refreshing feedback..." : "Refresh feedback"}
-                    </button>
-                  </div>
-                  <p className="section-note">
-                    Capture quick analyst feedback for the latest grounded answer.
-                  </p>
-
-                  <form className="review-form" onSubmit={(event) => void handleSubmitFeedback(event)}>
-                    <p className="review-label">Feedback value</p>
-                    <div className="review-choice-row">
-                      <button
-                        type="button"
-                        className={
-                          feedbackValue === "positive"
-                            ? "button review-choice-positive-active"
-                            : "button"
-                        }
-                        onClick={() => setFeedbackValue("positive")}
-                        disabled={isSubmittingFeedback || askResult === null}
-                      >
-                        Thumbs up
-                      </button>
-                      <button
-                        type="button"
-                        className={
-                          feedbackValue === "negative"
-                            ? "button review-choice-negative-active"
-                            : "button"
-                        }
-                        onClick={() => setFeedbackValue("negative")}
-                        disabled={isSubmittingFeedback || askResult === null}
-                      >
-                        Thumbs down
-                      </button>
-                    </div>
-
-                    <label htmlFor="feedback-reason-input" className="review-label">
-                      Reason {feedbackValue === "negative" ? "(required)" : "(optional)"}
-                    </label>
-                    <textarea
-                      id="feedback-reason-input"
-                      className="review-textarea"
-                      value={feedbackReason}
-                      onChange={(event) => setFeedbackReason(event.target.value)}
-                      placeholder="Why this output was good or problematic."
-                      rows={2}
-                      disabled={isSubmittingFeedback || askResult === null}
-                    />
-
-                    <label htmlFor="feedback-note-input" className="review-label">
-                      Reviewer note (optional)
-                    </label>
-                    <textarea
-                      id="feedback-note-input"
-                      className="review-textarea"
-                      value={feedbackReviewerNote}
-                      onChange={(event) => setFeedbackReviewerNote(event.target.value)}
-                      placeholder="Additional context for future review."
-                      rows={2}
-                      disabled={isSubmittingFeedback || askResult === null}
-                    />
-
-                    <div className="review-actions">
-                      <button
-                        type="submit"
-                        className="button"
-                        disabled={isSubmittingFeedback || askResult === null}
-                      >
-                        {isSubmittingFeedback ? "Saving feedback..." : "Save feedback"}
-                      </button>
-                    </div>
-                  </form>
-
-                  {askResult === null ? (
-                    <p className="empty-hint">Run grounded Q&A to enable feedback submission.</p>
-                  ) : null}
-
-                  {feedbackSubmitErrorMessage ? (
-                    <section className="error-panel">
-                      <p>Could not save feedback: {feedbackSubmitErrorMessage}</p>
-                    </section>
-                  ) : null}
-
-                  {feedbackSubmitStatusMessage ? (
-                    <p className="review-success-text">{feedbackSubmitStatusMessage}</p>
-                  ) : null}
-
-                  <div className="review-history">
-                    <h4>Recent feedback</h4>
-
-                    {isFeedbackLoading ? <p className="inline-loading">Loading feedback...</p> : null}
-
-                    {!isFeedbackLoading && feedbackLoadErrorMessage ? (
-                      <section className="error-panel">
-                        <p>Could not load feedback: {feedbackLoadErrorMessage}</p>
-                        <button
-                          type="button"
-                          className="button"
-                          onClick={() => void refreshSelectedDocumentFeedback()}
-                          disabled={isSubmittingFeedback}
-                        >
-                          Retry feedback
-                        </button>
-                      </section>
-                    ) : null}
-
-                    {!isFeedbackLoading &&
-                    !feedbackLoadErrorMessage &&
-                    feedbackRecords.length === 0 ? (
-                      <p className="empty-hint">No feedback has been recorded for this document yet.</p>
-                    ) : null}
-
-                    {!isFeedbackLoading &&
-                    !feedbackLoadErrorMessage &&
-                    feedbackRecords.length > 0 ? (
-                      <div className="feedback-list">
-                        {feedbackRecords.map((feedbackRecord) => (
-                          <article key={feedbackRecord.id} className="feedback-card">
-                            <header className="feedback-meta">
-                              <span>#{feedbackRecord.id}</span>
-                              <span>{feedbackRecord.workflow_type}</span>
-                              <span
-                                className={
-                                  feedbackRecord.feedback_value === "positive"
-                                    ? "feedback-value-pill positive"
-                                    : "feedback-value-pill negative"
-                                }
-                              >
-                                {feedbackRecord.feedback_value}
-                              </span>
-                              <span title={feedbackRecord.created_at}>
-                                {formatCreatedAt(feedbackRecord.created_at)}
-                              </span>
-                            </header>
-                            {feedbackRecord.target_reference ? (
-                              <p className="feedback-detail">
-                                target_reference: {feedbackRecord.target_reference}
-                              </p>
-                            ) : null}
-                            {feedbackRecord.reason ? (
-                              <p className="feedback-detail">reason: {feedbackRecord.reason}</p>
-                            ) : null}
-                            {feedbackRecord.reviewer_note ? (
-                              <p className="feedback-detail">
-                                reviewer_note: {feedbackRecord.reviewer_note}
-                              </p>
-                            ) : null}
-                          </article>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </section>
-
-                <section className="chunks-section">
-                  <div className="chunks-section-header">
-                    <h3>Chunks</h3>
-                    <button
-                      type="button"
-                      className="button"
-                      onClick={() => void refreshSelectedDocumentChunks()}
-                      disabled={isChunksLoading || isProcessing || isDetailLoading}
-                    >
-                      {isChunksLoading ? "Refreshing chunks..." : "Refresh chunks"}
-                    </button>
-                  </div>
-
-                  {isChunksLoading ? <p className="inline-loading">Loading chunks...</p> : null}
-
-                  {!isChunksLoading && chunksErrorMessage ? (
-                    <section className="error-panel">
-                      <p>Could not load chunks: {chunksErrorMessage}</p>
-                      <button
-                        type="button"
-                        className="button"
-                        onClick={() => void refreshSelectedDocumentChunks()}
-                        disabled={isProcessing || isDetailLoading}
-                      >
-                        Retry chunks
-                      </button>
-                    </section>
-                  ) : null}
-
-                  {!isChunksLoading && !chunksErrorMessage && chunksCountFromApi !== null ? (
-                    <p className="chunk-count-text">chunks_count: {chunksCountFromApi}</p>
-                  ) : null}
-
-                  {!isChunksLoading && !chunksErrorMessage && documentChunks.length === 0 ? (
-                    <p className="empty-hint">No chunks available for this document.</p>
-                  ) : null}
-
-                  {!isChunksLoading && !chunksErrorMessage && documentChunks.length > 0 ? (
-                    <div className="chunks-list">
-                      {documentChunks.map((chunk) => (
-                        <article key={chunk.chunk_index} className="chunk-card">
-                          <header className="chunk-meta">
-                            <span>chunk_index: {chunk.chunk_index}</span>
-                            <span>
-                              page_number: {chunk.page_number === null ? "null" : chunk.page_number}
-                            </span>
-                            <span>token_count: {chunk.token_count}</span>
-                          </header>
-                          <div className="chunk-text">{chunk.text}</div>
-                        </article>
-                      ))}
-                    </div>
-                  ) : null}
-                </section>
+                <DocumentHeader
+                  detail={selectedDocumentDetail}
+                  isProcessing={isProcessing}
+                  isDetailLoading={isDetailLoading}
+                  processingStatusMessage={processingStatusMessage}
+                  processingErrorMessage={processingErrorMessage}
+                  onProcess={() => void handleProcessDocument()}
+                  onRefreshDetail={() => void refreshSelectedDocumentDetail()}
+                />
+                <ResearchActionsPanel
+                  canRunActions={canRunActions}
+                  isActionLoading={isActionLoading}
+                  isDetailLoading={isDetailLoading}
+                  isProcessing={isProcessing}
+                  isDocumentReady={isDocumentReady}
+                  activeAction={activeAction}
+                  questionInput={questionInput}
+                  onActionChange={(action) => {
+                    setActiveAction(action);
+                    setActionErrorMessage(null);
+                  }}
+                  onQuestionChange={setQuestionInput}
+                  onAskSubmit={(event) => void handleAskSubmit(event)}
+                  onRunAction={() => void handleRunActionButton()}
+                />
+                <ResultPanel
+                  isActionLoading={isActionLoading}
+                  activeAction={activeAction}
+                  actionErrorMessage={actionErrorMessage}
+                  actionResult={actionResult}
+                />
+                <AdvancedPanel
+                  detail={selectedDocumentDetail}
+                  isProcessing={isProcessing}
+                  isDetailLoading={isDetailLoading}
+                  documentChunks={documentChunks}
+                  chunksCountFromApi={chunksCountFromApi}
+                  isChunksLoading={isChunksLoading}
+                  chunksErrorMessage={chunksErrorMessage}
+                  isAdvancedOpen={isAdvancedOpen}
+                  onToggle={handleAdvancedToggle}
+                  onRefreshChunks={() => void refreshSelectedDocumentChunks()}
+                />
+                <FeedbackPanel
+                  actionResult={actionResult}
+                  feedbackValue={feedbackValue}
+                  feedbackReason={feedbackReason}
+                  feedbackReviewerNote={feedbackReviewerNote}
+                  isSubmittingFeedback={isSubmittingFeedback}
+                  feedbackSubmitErrorMessage={feedbackSubmitErrorMessage}
+                  feedbackSubmitStatusMessage={feedbackSubmitStatusMessage}
+                  feedbackRecords={feedbackRecords}
+                  isFeedbackLoading={isFeedbackLoading}
+                  feedbackLoadErrorMessage={feedbackLoadErrorMessage}
+                  onValueChange={setFeedbackValue}
+                  onReasonChange={setFeedbackReason}
+                  onReviewerNoteChange={setFeedbackReviewerNote}
+                  onSubmit={(event) => void handleSubmitFeedback(event)}
+                  onRefreshFeedback={() => void refreshSelectedDocumentFeedback()}
+                />
               </>
             ) : null}
-          </section>
-
-          <section className="documents-table-section">
-            <div className="section-header-row">
-              <h2>Documents list</h2>
-              <p>Select one document at a time.</p>
-            </div>
-
-            <section className="documents-table-wrapper">
-            <table className="documents-table">
-              <thead>
-                <tr>
-                  <th>select</th>
-                  <th>id</th>
-                  <th>company_name</th>
-                  <th>document_type</th>
-                  <th>period</th>
-                  <th>status</th>
-                  <th>created_at</th>
-                </tr>
-              </thead>
-              <tbody>
-                {documents.map((document) => (
-                  <tr
-                    key={document.id}
-                    className={document.id === selectedDocumentId ? "selected-row" : ""}
-                  >
-                    <td>
-                      <button
-                        type="button"
-                        className="button"
-                        onClick={() => setSelectedDocumentId(document.id)}
-                        disabled={document.id === selectedDocumentId || isProcessing}
-                      >
-                        {document.id === selectedDocumentId ? "Selected" : "Select"}
-                      </button>
-                    </td>
-                    <td>{document.id}</td>
-                    <td>{document.company_name}</td>
-                    <td>{document.document_type}</td>
-                    <td>{document.period}</td>
-                    <td>{document.status}</td>
-                    <td title={document.created_at}>{formatCreatedAt(document.created_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </section>
           </section>
         </>
       ) : null}
