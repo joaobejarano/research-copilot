@@ -1,11 +1,13 @@
 import asyncio
 from typing import Any
 
+import httpx
 import pytest
 
 from mcp_server.config import MCPServerSettings
 from mcp_server.server import create_mcp_server
 from mcp_server.tools import documents as document_tools
+from mcp_server.tools.errors import MCPToolError
 
 
 def _settings() -> MCPServerSettings:
@@ -127,8 +129,66 @@ def test_fetch_document_chunks_from_backend_returns_chunk_text_only(
 
 
 def test_fetch_document_chunks_from_backend_rejects_invalid_document_id() -> None:
-    with pytest.raises(ValueError, match="document_id"):
+    with pytest.raises(MCPToolError) as exc_info:
         document_tools.fetch_document_chunks_from_backend(settings=_settings(), document_id=0)
+
+    assert exc_info.value.payload.code == "invalid_document_id"
+    assert exc_info.value.payload.details == {"document_id": 0}
+
+
+def test_request_backend_json_maps_document_not_ready_to_structured_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_request(**kwargs: Any) -> httpx.Response:
+        request = httpx.Request("POST", "http://127.0.0.1:8000/documents/4/memo")
+        return httpx.Response(
+            status_code=400,
+            json={"detail": "Document must be processed and ready before memo generation."},
+            request=request,
+        )
+
+    monkeypatch.setattr(document_tools.httpx, "request", fake_request)
+
+    with pytest.raises(MCPToolError) as exc_info:
+        document_tools._request_backend_json(
+            base_url="http://127.0.0.1:8000",
+            path="/documents/4/memo",
+            method="POST",
+        )
+
+    assert exc_info.value.payload.code == "document_not_ready"
+    assert exc_info.value.payload.retryable is False
+    assert exc_info.value.payload.details["status_code"] == 400
+
+
+def test_request_backend_json_maps_connection_failures_to_retryable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_request(**kwargs: Any) -> httpx.Response:
+        raise httpx.ConnectError(
+            "Connection refused",
+            request=httpx.Request("GET", "http://127.0.0.1:8000/documents"),
+        )
+
+    monkeypatch.setattr(document_tools.httpx, "request", fake_request)
+
+    with pytest.raises(MCPToolError) as exc_info:
+        document_tools._request_backend_json(
+            base_url="http://127.0.0.1:8000",
+            path="/documents",
+        )
+
+    assert exc_info.value.payload.code == "backend_unreachable"
+    assert exc_info.value.payload.retryable is True
+
+
+def test_registered_document_tool_invalid_document_id_returns_structured_error() -> None:
+    server = create_mcp_server(_settings())
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(server.call_tool("fetch_document_chunks", {"document_id": 0}))
+
+    assert '"code":"invalid_document_id"' in str(exc_info.value)
 
 
 def test_registered_document_tools_can_be_invoked(

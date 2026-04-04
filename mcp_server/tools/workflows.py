@@ -1,14 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from mcp_server.config import MCPServerSettings
 from mcp_server.tools.documents import _request_backend_json
+from mcp_server.tools.errors import raise_mcp_tool_error
 
 MODEL_CONFIG = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+DocumentIdParam = Annotated[
+    int,
+    Field(description="Document identifier from the Research Copilot backend (must be >= 1)."),
+]
 
 
 class WorkflowCitation(BaseModel):
@@ -27,8 +33,14 @@ class AskDocumentToolOutput(BaseModel):
     tool: Literal["ask_document"] = "ask_document"
     question: str = Field(min_length=1)
     answer: str = Field(min_length=1)
-    status: Literal["answered", "insufficient_evidence"]
-    citations: list[WorkflowCitation] = Field(default_factory=list, max_length=100)
+    status: Literal["answered", "insufficient_evidence"] = Field(
+        description="`answered` when evidence supports an answer; otherwise `insufficient_evidence`."
+    )
+    citations: list[WorkflowCitation] = Field(
+        default_factory=list,
+        max_length=100,
+        description="Grounding citations for the returned answer.",
+    )
 
     model_config = MODEL_CONFIG
 
@@ -68,8 +80,13 @@ class MemoDraft(BaseModel):
 class GenerateMemoToolOutput(BaseModel):
     tool: Literal["generate_memo"] = "generate_memo"
     document_id: int = Field(ge=1)
-    status: Literal["generated", "insufficient_evidence"]
-    memo: MemoDraft | None = None
+    status: Literal["generated", "insufficient_evidence"] = Field(
+        description="`generated` when memo content is grounded; otherwise `insufficient_evidence`."
+    )
+    memo: MemoDraft | None = Field(
+        default=None,
+        description="Memo payload when status is `generated`; null for `insufficient_evidence`.",
+    )
 
     model_config = MODEL_CONFIG
 
@@ -101,7 +118,9 @@ class ExtractRisksToolOutput(BaseModel):
     tool: Literal["extract_risks"] = "extract_risks"
     workflow: Literal["risk_extraction"]
     document_id: int = Field(ge=1)
-    status: Literal["completed", "insufficient_evidence"]
+    status: Literal["completed", "insufficient_evidence"] = Field(
+        description="`completed` when risk extraction succeeds; otherwise `insufficient_evidence`."
+    )
     risks: list[RiskItem] = Field(default_factory=list, max_length=100)
     evidence: WorkflowEvidence = Field(default_factory=WorkflowEvidence)
 
@@ -121,7 +140,10 @@ class _BackendExtractRisksResponse(BaseModel):
 def _normalize_question(question: str) -> str:
     normalized = " ".join(question.split())
     if not normalized:
-        raise ValueError("question must not be empty.")
+        raise_mcp_tool_error(
+            code="invalid_question",
+            message="question must not be empty.",
+        )
     return normalized
 
 
@@ -134,7 +156,11 @@ def ask_document_from_backend(
     min_similarity: float | None = None,
 ) -> AskDocumentToolOutput:
     if document_id < 1:
-        raise ValueError("document_id must be >= 1.")
+        raise_mcp_tool_error(
+            code="invalid_document_id",
+            message="document_id must be >= 1.",
+            details={"document_id": document_id},
+        )
 
     body: dict[str, Any] = {
         "question": _normalize_question(question),
@@ -151,7 +177,11 @@ def ask_document_from_backend(
         body=body,
     )
     if not isinstance(payload, dict):
-        raise ValueError("Backend /documents/{document_id}/ask response must be a JSON object.")
+        raise_mcp_tool_error(
+            code="backend_invalid_response",
+            message="Backend /documents/{document_id}/ask response must be a JSON object.",
+            details={"method": "POST", "path": f"/documents/{document_id}/ask"},
+        )
 
     ask_response = _BackendAskResponse.model_validate(payload)
     return AskDocumentToolOutput(
@@ -168,7 +198,11 @@ def generate_memo_from_backend(
     document_id: int,
 ) -> GenerateMemoToolOutput:
     if document_id < 1:
-        raise ValueError("document_id must be >= 1.")
+        raise_mcp_tool_error(
+            code="invalid_document_id",
+            message="document_id must be >= 1.",
+            details={"document_id": document_id},
+        )
 
     payload = _request_backend_json(
         base_url=settings.backend_base_url,
@@ -176,7 +210,11 @@ def generate_memo_from_backend(
         method="POST",
     )
     if not isinstance(payload, dict):
-        raise ValueError("Backend /documents/{document_id}/memo response must be a JSON object.")
+        raise_mcp_tool_error(
+            code="backend_invalid_response",
+            message="Backend /documents/{document_id}/memo response must be a JSON object.",
+            details={"method": "POST", "path": f"/documents/{document_id}/memo"},
+        )
 
     memo_response = _BackendMemoResponse.model_validate(payload)
     return GenerateMemoToolOutput(
@@ -192,7 +230,11 @@ def extract_risks_from_backend(
     document_id: int,
 ) -> ExtractRisksToolOutput:
     if document_id < 1:
-        raise ValueError("document_id must be >= 1.")
+        raise_mcp_tool_error(
+            code="invalid_document_id",
+            message="document_id must be >= 1.",
+            details={"document_id": document_id},
+        )
 
     payload = _request_backend_json(
         base_url=settings.backend_base_url,
@@ -200,8 +242,10 @@ def extract_risks_from_backend(
         method="POST",
     )
     if not isinstance(payload, dict):
-        raise ValueError(
-            "Backend /documents/{document_id}/extract/risks response must be a JSON object."
+        raise_mcp_tool_error(
+            code="backend_invalid_response",
+            message="Backend /documents/{document_id}/extract/risks response must be a JSON object.",
+            details={"method": "POST", "path": f"/documents/{document_id}/extract/risks"},
         )
 
     risks_response = _BackendExtractRisksResponse.model_validate(payload)
@@ -218,16 +262,32 @@ def register_workflow_tools(*, server: FastMCP, settings: MCPServerSettings) -> 
     @server.tool(
         name="ask_document",
         description=(
-            "Run grounded Q&A for one document using the existing backend ask workflow. "
-            "Returns answer, status, and citations."
+            "Grounded Q&A for one ready document. Returns `answered` with citations or "
+            "`insufficient_evidence` when context is not sufficient."
         ),
         structured_output=True,
     )
     def ask_document(
-        document_id: int,
-        question: str,
-        top_k: int | None = None,
-        min_similarity: float | None = None,
+        document_id: DocumentIdParam,
+        question: Annotated[
+            str,
+            Field(min_length=1, description="Question to answer using grounded document evidence."),
+        ],
+        top_k: Annotated[
+            int | None,
+            Field(
+                ge=1,
+                description="Optional retrieval override for number of chunks to inspect.",
+            ),
+        ] = None,
+        min_similarity: Annotated[
+            float | None,
+            Field(
+                ge=-1.0,
+                le=1.0,
+                description="Optional retrieval override for minimum chunk similarity.",
+            ),
+        ] = None,
     ) -> AskDocumentToolOutput:
         return ask_document_from_backend(
             settings=settings,
@@ -240,21 +300,21 @@ def register_workflow_tools(*, server: FastMCP, settings: MCPServerSettings) -> 
     @server.tool(
         name="generate_memo",
         description=(
-            "Generate a grounded memo for one document using the existing backend memo workflow. "
-            "Preserves generated/insufficient_evidence statuses."
+            "Generate a grounded memo for one ready document. Returns `generated` with a memo "
+            "or `insufficient_evidence` with memo=null."
         ),
         structured_output=True,
     )
-    def generate_memo(document_id: int) -> GenerateMemoToolOutput:
+    def generate_memo(document_id: DocumentIdParam) -> GenerateMemoToolOutput:
         return generate_memo_from_backend(settings=settings, document_id=document_id)
 
     @server.tool(
         name="extract_risks",
         description=(
-            "Extract structured risks for one document using the existing backend risk workflow. "
-            "Preserves completed/insufficient_evidence statuses."
+            "Extract structured risks for one ready document. Returns `completed` with risk "
+            "items or `insufficient_evidence` when grounding is not adequate."
         ),
         structured_output=True,
     )
-    def extract_risks(document_id: int) -> ExtractRisksToolOutput:
+    def extract_risks(document_id: DocumentIdParam) -> ExtractRisksToolOutput:
         return extract_risks_from_backend(settings=settings, document_id=document_id)

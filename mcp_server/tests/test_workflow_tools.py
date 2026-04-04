@@ -5,6 +5,7 @@ import pytest
 
 from mcp_server.config import MCPServerSettings
 from mcp_server.server import create_mcp_server
+from mcp_server.tools.errors import MCPToolError
 from mcp_server.tools import workflows as workflow_tools
 
 
@@ -108,12 +109,30 @@ def test_extract_risks_from_backend_preserves_insufficient_evidence(
 
 
 def test_ask_document_from_backend_rejects_empty_question() -> None:
-    with pytest.raises(ValueError, match="question"):
+    with pytest.raises(MCPToolError) as exc_info:
         workflow_tools.ask_document_from_backend(
             settings=_settings(),
             document_id=1,
             question="   ",
         )
+
+    assert exc_info.value.payload.code == "invalid_question"
+
+
+def test_generate_memo_from_backend_rejects_invalid_document_id() -> None:
+    with pytest.raises(MCPToolError) as exc_info:
+        workflow_tools.generate_memo_from_backend(settings=_settings(), document_id=0)
+
+    assert exc_info.value.payload.code == "invalid_document_id"
+
+
+def test_registered_workflow_tool_invalid_document_id_returns_structured_error() -> None:
+    server = create_mcp_server(_settings())
+
+    with pytest.raises(Exception) as exc_info:
+        asyncio.run(server.call_tool("generate_memo", {"document_id": 0}))
+
+    assert '"code":"invalid_document_id"' in str(exc_info.value)
 
 
 def test_registered_workflow_tools_can_be_invoked(

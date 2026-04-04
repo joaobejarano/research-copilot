@@ -22,12 +22,36 @@ def test_create_mcp_server_bootstrap_registers_stage8_tools() -> None:
     assert server.settings.port == 8811
     assert server.settings.mount_path == "/"
     tools = asyncio.run(server.list_tools())
-    assert {tool.name for tool in tools} == {
+    tool_names = {tool.name for tool in tools}
+    assert tool_names == {
         "search_documents",
         "fetch_document_chunks",
         "ask_document",
         "generate_memo",
         "extract_risks",
     }
+
+    tools_by_name = {tool.name: tool for tool in tools}
+    ask_tool = tools_by_name["ask_document"]
+    assert "insufficient_evidence" in (ask_tool.description or "")
+    assert {"document_id", "question"} <= set(ask_tool.inputSchema["properties"])
+    assert "must be >= 1" in ask_tool.inputSchema["properties"]["document_id"]["description"]
+    assert set(ask_tool.outputSchema["properties"]["status"]["enum"]) == {
+        "answered",
+        "insufficient_evidence",
+    }
+
+    memo_tool = tools_by_name["generate_memo"]
+    assert set(memo_tool.outputSchema["properties"]["status"]["enum"]) == {
+        "generated",
+        "insufficient_evidence",
+    }
+
+    risks_tool = tools_by_name["extract_risks"]
+    assert set(risks_tool.outputSchema["properties"]["status"]["enum"]) == {
+        "completed",
+        "insufficient_evidence",
+    }
+
     assert asyncio.run(server.list_resources()) == []
     assert asyncio.run(server.list_resource_templates()) == []
