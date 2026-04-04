@@ -1,81 +1,66 @@
-# Stage 8 Architecture Additions
+# Stage 9 Architecture Additions
 
-This document describes only what Stage 8 adds.
+This document describes only what Stage 9 adds.
 
-## Scope Added in Stage 8
+## Scope Added in Stage 9
 
-- separate MCP server process in `mcp_server/`
-- shared MCP configuration for server runtime and backend integration
-- Stage 8 MCP tools for document discovery, chunk inspection, and document-scoped workflow actions
-- structured MCP error payloads for predictable client-side handling
+- repository-level agent workflow contract refinement in `AGENTS.md`
+- reusable skill library expansion in `.agents/skills/`
+- lightweight developer-facing workflow guide for agents
+- lightweight repository-maintenance checks for required agent assets
 
-Out of scope in Stage 8:
+Out of scope in Stage 9:
 
-- multi-step agent orchestration through MCP
-- external MCP deployment infrastructure
-- Stage 9+ MCP capability expansion
+- product feature changes
+- new business workflows
+- heavy validation frameworks or CI platform expansion
 
-## Components Added in Stage 8
+## Components Added in Stage 9
 
-### MCP server bootstrap (`mcp_server/`)
+### Agent operating contract
 
-- `mcp_server/config.py`
-  - loads MCP-specific env vars
-  - validates transport and port
-  - resolves backend base URL and optional DB linkage
-- `mcp_server/server.py`
-  - creates `FastMCP` instance
-  - registers tools/resources
-- `mcp_server/main.py`
-  - local entrypoint (`python -m mcp_server`)
+- `AGENTS.md`
+  - keeps scope control explicit
+  - defines incremental implementation expectations
+  - defines testing-before-handoff and docs update requirements
+  - keeps architecture guardrails practical and concise
 
-### MCP tools
+### Reusable agent skills
 
-- `mcp_server/tools/documents.py`
-  - `search_documents` (read-only metadata listing/filtering)
-  - `fetch_document_chunks` (read-only chunk metadata/text)
-- `mcp_server/tools/workflows.py`
-  - `ask_document`
-  - `generate_memo`
-  - `extract_risks`
-  - all document-scoped, routed through existing backend workflows
-- `mcp_server/tools/errors.py`
-  - structured MCP error model with:
-    - `code`
-    - `message`
-    - `retryable`
-    - `details`
+- `.agents/skills/implementation-strategy/SKILL.md`
+- `.agents/skills/eval-runner/SKILL.md`
+- `.agents/skills/prompt-regression-check/SKILL.md`
+- `.agents/skills/docs-sync/SKILL.md`
+- `.agents/skills/pr-draft-summary/SKILL.md`
 
-### MCP resources
+These complement existing skills and provide narrow reusable guidance for planning, eval validation, docs synchronization, and PR/handoff drafting.
 
-- `mcp_server/resources/`
-  - registration placeholder kept explicit
-  - no Stage 8 resource payloads added yet
+### Agent workflow documentation
 
-## Stage 8 Runtime Flow
+- `docs/agent-development-workflow.md`
+  - explains role of `AGENTS.md`
+  - explains role of `.agents/skills/`
+  - defines incremental agent workflow for this repository
+  - maps common tasks to specific skills
 
-1. MCP server starts with validated MCP settings.
-2. Client invokes an MCP tool.
-3. Tool validates input and calls backend endpoint through `MCP_BACKEND_BASE_URL`.
-4. MCP returns structured output aligned with backend contracts.
-5. If failure occurs, MCP returns structured error payload with explicit error code.
+### Lightweight repository checks
 
-## Stage 8 Design Constraints Enforced
+- `tests/maintenance/test_agent_workflow_assets.py`
+  - checks `AGENTS.md` exists
+  - checks required skill files exist
+  - checks required agent workflow docs exist
 
-- MCP stays separate from FastAPI backend process.
-- Tools reuse existing backend behavior instead of duplicating business logic.
-- Initial toolset is document-scoped only.
-- Read-only inspection tools are preserved alongside first action tools.
-- `insufficient_evidence` behavior from grounded workflows is preserved in MCP outputs.
+## Stage 9 Runtime/Process Flow
 
-## Stage 8 Test Coverage Added
+1. Agent reads `AGENTS.md` and task scope.
+2. Agent selects a narrow skill from `.agents/skills/`.
+3. Agent implements incremental changes and runs targeted checks.
+4. Agent updates docs when contracts/commands/workflow guidance change.
+5. Maintenance tests confirm required agent assets are present.
 
-- MCP server startup and tool registration tests
-- schema/description inspection tests for exposed tools
-- deterministic tool execution tests for:
-  - `search_documents`
-  - `fetch_document_chunks`
-  - `ask_document`
-  - `generate_memo`
-  - `extract_risks`
-- structured error-path tests for invalid input and backend failure mapping
+## Stage 9 Design Constraints Enforced
+
+- Agent workflow is repository process infrastructure, not product runtime behavior.
+- Skills are intentionally narrow and composable.
+- Validation remains lightweight and practical.
+- Documentation reflects only implemented repository behavior.
