@@ -13,6 +13,10 @@ import {
   getDocumentDetail,
   listDocuments,
   processDocument,
+  streamKpis,
+  streamMemo,
+  streamRisks,
+  streamTimeline,
 } from "../../lib/api/documents";
 import type {
   DocumentChunkModel,
@@ -54,6 +58,7 @@ export default function DocumentsPage() {
   const [isActionLoading, setIsActionLoading] = useState<boolean>(false);
   const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<ResearchActionResult | null>(null);
+  const [streamingStatusMessage, setStreamingStatusMessage] = useState<string | null>(null);
 
   const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(false);
   const [documentChunks, setDocumentChunks] = useState<DocumentChunkModel[]>([]);
@@ -112,6 +117,7 @@ export default function DocumentsPage() {
       setIsActionLoading(false);
       setActionErrorMessage(null);
       setActionResult(null);
+      setStreamingStatusMessage(null);
 
       setIsAdvancedOpen(false);
       setDocumentChunks([]);
@@ -182,6 +188,7 @@ export default function DocumentsPage() {
     setIsActionLoading(false);
     setActionErrorMessage(null);
     setActionResult(null);
+    setStreamingStatusMessage(null);
 
     setIsAdvancedOpen(false);
     setDocumentChunks([]);
@@ -323,6 +330,7 @@ export default function DocumentsPage() {
 
     setIsActionLoading(true);
     setActionErrorMessage(null);
+    setStreamingStatusMessage(null);
 
     try {
       let nextResult: ResearchActionResult;
@@ -340,29 +348,34 @@ export default function DocumentsPage() {
             question: normalizedQuestion,
           }),
         };
-      } else if (action === "memo") {
-        nextResult = {
-          action: "memo",
-          response: await generateMemo({ documentId: selectedDocumentId }),
-        };
-      } else if (action === "extract_kpis") {
-        nextResult = {
-          action: "extract_kpis",
-          response: await extractKpis({ documentId: selectedDocumentId }),
-        };
-      } else if (action === "extract_risks") {
-        nextResult = {
-          action: "extract_risks",
-          response: await extractRisks({ documentId: selectedDocumentId }),
-        };
       } else {
-        nextResult = {
-          action: "timeline",
-          response: await buildTimeline({ documentId: selectedDocumentId }),
-        };
+        // Streaming path for the four long-running structured workflows.
+        const streamFn =
+          action === "memo" ? streamMemo :
+          action === "extract_kpis" ? streamKpis :
+          action === "extract_risks" ? streamRisks :
+          streamTimeline;
+
+        let resultPayload: ResearchActionResult | null = null;
+
+        for await (const event of streamFn(selectedDocumentId)) {
+          if (event.type === "status") {
+            setStreamingStatusMessage(event.message);
+          } else if (event.type === "result") {
+            resultPayload = { action, response: event.payload } as ResearchActionResult;
+          } else if (event.type === "error") {
+            throw new Error(event.message);
+          }
+        }
+
+        if (resultPayload === null) {
+          throw new Error("Stream ended without a result.");
+        }
+        nextResult = resultPayload;
       }
 
       setActionResult(nextResult);
+      setStreamingStatusMessage(null);
       setFeedbackValue("positive");
       setFeedbackReason("");
       setFeedbackReviewerNote("");
@@ -370,6 +383,7 @@ export default function DocumentsPage() {
       setFeedbackSubmitStatusMessage(null);
     } catch (error) {
       setActionResult(null);
+      setStreamingStatusMessage(null);
       setActionErrorMessage(toErrorMessage(error));
     } finally {
       setIsActionLoading(false);
@@ -587,6 +601,7 @@ export default function DocumentsPage() {
                   activeAction={activeAction}
                   actionErrorMessage={actionErrorMessage}
                   actionResult={actionResult}
+                  streamingStatusMessage={streamingStatusMessage}
                 />
                 <AdvancedPanel
                   detail={selectedDocumentDetail}

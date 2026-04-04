@@ -1,4 +1,5 @@
-import { requestJson } from "./client";
+import { ApiClientError, requestJson } from "./client";
+import { getApiBaseUrl } from "../config/env";
 import type {
   AskGroundedQuestionRequestModel,
   AskGroundedQuestionResponseModel,
@@ -17,7 +18,8 @@ import type {
   ListDocumentsRequestModel,
   ListDocumentsResponseModel,
   ProcessDocumentRequestModel,
-  ProcessDocumentResponseModel
+  ProcessDocumentResponseModel,
+  WorkflowStreamEvent
 } from "./models/documents";
 
 export async function listDocuments(
@@ -91,4 +93,86 @@ export async function buildTimeline(
   return requestJson<BuildTimelineResponseModel>(`/documents/${request.documentId}/timeline`, {
     method: "POST"
   });
+}
+
+// ------------------------------------------------------------------ //
+// Streaming variants — yields WorkflowStreamEvent from SSE endpoints  //
+// ------------------------------------------------------------------ //
+
+async function* parseSSEStream(body: ReadableStream<Uint8Array>): AsyncGenerator<WorkflowStreamEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("data: ")) {
+            try {
+              yield JSON.parse(trimmed.slice(6)) as WorkflowStreamEvent;
+            } catch {
+              // skip malformed SSE events
+            }
+          }
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function openSSEStream(path: string): Promise<ReadableStream<Uint8Array>> {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    method: "POST",
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    let detail = response.statusText || "Stream request failed.";
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      if (typeof payload.detail === "string" && payload.detail.length > 0) {
+        detail = payload.detail;
+      }
+    } catch {
+      // ignore JSON parse errors on error responses
+    }
+    throw new ApiClientError(response.status, detail);
+  }
+
+  if (!response.body) {
+    throw new ApiClientError(500, "Response body was empty.");
+  }
+
+  return response.body;
+}
+
+export async function* streamMemo(documentId: number): AsyncGenerator<WorkflowStreamEvent> {
+  const body = await openSSEStream(`/documents/${documentId}/memo/stream`);
+  yield* parseSSEStream(body);
+}
+
+export async function* streamKpis(documentId: number): AsyncGenerator<WorkflowStreamEvent> {
+  const body = await openSSEStream(`/documents/${documentId}/extract/kpis/stream`);
+  yield* parseSSEStream(body);
+}
+
+export async function* streamRisks(documentId: number): AsyncGenerator<WorkflowStreamEvent> {
+  const body = await openSSEStream(`/documents/${documentId}/extract/risks/stream`);
+  yield* parseSSEStream(body);
+}
+
+export async function* streamTimeline(documentId: number): AsyncGenerator<WorkflowStreamEvent> {
+  const body = await openSSEStream(`/documents/${documentId}/timeline/stream`);
+  yield* parseSSEStream(body);
 }

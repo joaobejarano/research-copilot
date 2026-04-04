@@ -9,7 +9,11 @@ export {
   getDocumentChunks,
   getDocumentDetail,
   listDocuments,
-  processDocument
+  processDocument,
+  streamKpis,
+  streamMemo,
+  streamRisks,
+  streamTimeline
 } from "./documents";
 export type {
   AskGroundedQuestionRequestModel,
@@ -37,7 +41,8 @@ export type {
   ProcessDocumentResponseModel,
   RiskItemModel,
   TimelineEventModel,
-  WorkflowEvidenceModel
+  WorkflowEvidenceModel,
+  WorkflowStreamEvent
 } from "./models/documents";
 export type {
   CreateFeedbackRequestModel,

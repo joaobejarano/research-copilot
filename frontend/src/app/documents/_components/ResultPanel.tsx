@@ -10,6 +10,7 @@ interface ResultPanelProps {
   activeAction: ResearchActionType;
   actionErrorMessage: string | null;
   actionResult: ResearchActionResult | null;
+  streamingStatusMessage: string | null;
 }
 
 function ResultContent({ result }: { result: ResearchActionResult }) {
@@ -20,7 +21,7 @@ function ResultContent({ result }: { result: ResearchActionResult }) {
   return <TimelineResult result={result.response} />;
 }
 
-export function ResultPanel({ isActionLoading, activeAction, actionErrorMessage, actionResult }: ResultPanelProps) {
+export function ResultPanel({ isActionLoading, activeAction, actionErrorMessage, actionResult, streamingStatusMessage }: ResultPanelProps) {
   const status = actionResult ? getResultStatus(actionResult) : null;
 
   return (
@@ -28,7 +29,9 @@ export function ResultPanel({ isActionLoading, activeAction, actionErrorMessage,
       <p className="step-title">5. View result</p>
 
       {isActionLoading ? (
-        <p className="inline-loading">Running {getResultTitle(activeAction)}...</p>
+        <p className="inline-loading">
+          {streamingStatusMessage ?? `Running ${getResultTitle(activeAction)}...`}
+        </p>
       ) : null}
 
       {actionErrorMessage ? (

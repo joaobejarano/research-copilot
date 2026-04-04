@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -34,6 +35,12 @@ from app.workflows.schemas import (
     TimelineBuildingRequest,
 )
 from app.workflows.service import StructuredWorkflowService
+from app.workflows.streaming import (
+    stream_kpis_workflow,
+    stream_memo_workflow,
+    stream_risks_workflow,
+    stream_timeline_workflow,
+)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -629,6 +636,124 @@ async def build_document_timeline(
         detail = str(exc)
         status_code = 404 if detail.endswith("was not found.") else 400
         raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+}
+
+
+@router.post("/{document_id}/memo/stream")
+async def stream_document_memo(
+    document_id: int,
+    payload: DocumentMemoRequest | None = None,
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    normalized_payload = payload or DocumentMemoRequest()
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if document.status != "ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be processed and ready before memo generation.",
+        )
+    request = MemoGenerationRequest(
+        document_id=document_id,
+        instruction=normalized_payload.instruction,
+        top_k=normalized_payload.top_k,
+        min_similarity=normalized_payload.min_similarity,
+    )
+    return StreamingResponse(
+        stream_memo_workflow(db=db, request=request),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.post("/{document_id}/extract/kpis/stream")
+async def stream_document_kpis(
+    document_id: int,
+    payload: DocumentKPIRequest | None = None,
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    normalized_payload = payload or DocumentKPIRequest()
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if document.status != "ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be processed and ready before KPI extraction.",
+        )
+    request = KPIExtractionRequest(
+        document_id=document_id,
+        instruction=normalized_payload.instruction,
+        top_k=normalized_payload.top_k,
+        min_similarity=normalized_payload.min_similarity,
+    )
+    return StreamingResponse(
+        stream_kpis_workflow(db=db, request=request),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.post("/{document_id}/extract/risks/stream")
+async def stream_document_risks(
+    document_id: int,
+    payload: DocumentRiskRequest | None = None,
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    normalized_payload = payload or DocumentRiskRequest()
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if document.status != "ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be processed and ready before risk extraction.",
+        )
+    request = RiskExtractionRequest(
+        document_id=document_id,
+        instruction=normalized_payload.instruction,
+        top_k=normalized_payload.top_k,
+        min_similarity=normalized_payload.min_similarity,
+    )
+    return StreamingResponse(
+        stream_risks_workflow(db=db, request=request),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.post("/{document_id}/timeline/stream")
+async def stream_document_timeline(
+    document_id: int,
+    payload: DocumentTimelineRequest | None = None,
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    normalized_payload = payload or DocumentTimelineRequest()
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if document.status != "ready":
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be processed and ready before timeline building.",
+        )
+    request = TimelineBuildingRequest(
+        document_id=document_id,
+        instruction=normalized_payload.instruction,
+        top_k=normalized_payload.top_k,
+        min_similarity=normalized_payload.min_similarity,
+    )
+    return StreamingResponse(
+        stream_timeline_workflow(db=db, request=request),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
 
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)

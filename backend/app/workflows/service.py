@@ -61,42 +61,24 @@ class StructuredWorkflowService:
         self.max_workflow_citations = max_workflow_citations
         self.max_workflow_items = max_workflow_items
 
+    # ------------------------------------------------------------------ #
+    # Public high-level workflow methods                                   #
+    # ------------------------------------------------------------------ #
+
     def generate_memo(
         self,
         *,
         db: Session,
         request: MemoGenerationRequest,
     ) -> MemoGenerationOutput:
-        context = self._build_context(
+        context = self.build_context(
             db=db,
             document_id=request.document_id,
             instruction=request.instruction,
             top_k=request.top_k,
             min_similarity=request.min_similarity,
         )
-        if not context.evidence.citations:
-            return MemoGenerationOutput(
-                document_id=request.document_id,
-                status=WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE,
-                evidence=context.evidence,
-            )
-
-        draft = self._llm_provider.generate_structured_output(
-            system_prompt=self._build_system_prompt("memo generation"),
-            user_prompt=self._build_user_prompt(context=context),
-            response_model=MemoDraft,
-        )
-        self._validate_citation_ids(
-            citation_ids=self._memo_citation_ids(draft),
-            evidence=context.evidence,
-        )
-
-        return MemoGenerationOutput(
-            document_id=request.document_id,
-            status=WORKFLOW_STATUS_GENERATED,
-            memo=draft,
-            evidence=context.evidence,
-        )
+        return self._execute_memo(context)
 
     def extract_kpis(
         self,
@@ -104,36 +86,14 @@ class StructuredWorkflowService:
         db: Session,
         request: KPIExtractionRequest,
     ) -> KPIExtractionOutput:
-        context = self._build_context(
+        context = self.build_context(
             db=db,
             document_id=request.document_id,
             instruction=request.instruction,
             top_k=request.top_k,
             min_similarity=request.min_similarity,
         )
-        if not context.evidence.citations:
-            return KPIExtractionOutput(
-                document_id=request.document_id,
-                status=WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE,
-                evidence=context.evidence,
-            )
-
-        draft = self._llm_provider.generate_structured_output(
-            system_prompt=self._build_system_prompt("kpi extraction"),
-            user_prompt=self._build_user_prompt(context=context),
-            response_model=KPIDraft,
-        )
-        self._validate_citation_ids(
-            citation_ids=[kpi.citation for kpi in draft.kpis],
-            evidence=context.evidence,
-        )
-
-        return KPIExtractionOutput(
-            document_id=request.document_id,
-            status=WORKFLOW_STATUS_COMPLETED,
-            kpis=draft.kpis,
-            evidence=context.evidence,
-        )
+        return self._execute_kpis(context)
 
     def extract_risks(
         self,
@@ -141,36 +101,14 @@ class StructuredWorkflowService:
         db: Session,
         request: RiskExtractionRequest,
     ) -> RiskExtractionOutput:
-        context = self._build_context(
+        context = self.build_context(
             db=db,
             document_id=request.document_id,
             instruction=request.instruction,
             top_k=request.top_k,
             min_similarity=request.min_similarity,
         )
-        if not context.evidence.citations:
-            return RiskExtractionOutput(
-                document_id=request.document_id,
-                status=WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE,
-                evidence=context.evidence,
-            )
-
-        draft = self._llm_provider.generate_structured_output(
-            system_prompt=self._build_system_prompt("risk extraction"),
-            user_prompt=self._build_user_prompt(context=context),
-            response_model=RiskDraft,
-        )
-        self._validate_citation_ids(
-            citation_ids=[risk.citation for risk in draft.risks],
-            evidence=context.evidence,
-        )
-
-        return RiskExtractionOutput(
-            document_id=request.document_id,
-            status=WORKFLOW_STATUS_COMPLETED,
-            risks=draft.risks,
-            evidence=context.evidence,
-        )
+        return self._execute_risks(context)
 
     def build_timeline(
         self,
@@ -178,38 +116,20 @@ class StructuredWorkflowService:
         db: Session,
         request: TimelineBuildingRequest,
     ) -> TimelineBuildingOutput:
-        context = self._build_context(
+        context = self.build_context(
             db=db,
             document_id=request.document_id,
             instruction=request.instruction,
             top_k=request.top_k,
             min_similarity=request.min_similarity,
         )
-        if not context.evidence.citations:
-            return TimelineBuildingOutput(
-                document_id=request.document_id,
-                status=WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE,
-                evidence=context.evidence,
-            )
+        return self._execute_timeline(context)
 
-        draft = self._llm_provider.generate_structured_output(
-            system_prompt=self._build_system_prompt("timeline building"),
-            user_prompt=self._build_user_prompt(context=context),
-            response_model=TimelineDraft,
-        )
-        self._validate_citation_ids(
-            citation_ids=[event.citation for event in draft.events],
-            evidence=context.evidence,
-        )
+    # ------------------------------------------------------------------ #
+    # Two-phase API: context retrieval + generation (used by streaming)    #
+    # ------------------------------------------------------------------ #
 
-        return TimelineBuildingOutput(
-            document_id=request.document_id,
-            status=WORKFLOW_STATUS_COMPLETED,
-            events=draft.events,
-            evidence=context.evidence,
-        )
-
-    def _build_context(
+    def build_context(
         self,
         *,
         db: Session,
@@ -220,9 +140,7 @@ class StructuredWorkflowService:
     ) -> WorkflowExecutionContext:
         retrieval_top_k = top_k if top_k is not None else max(RETRIEVAL_TOP_K, self.max_workflow_citations)
         retrieval_min_similarity = (
-            min_similarity
-            if min_similarity is not None
-            else RETRIEVAL_MIN_SIMILARITY
+            min_similarity if min_similarity is not None else RETRIEVAL_MIN_SIMILARITY
         )
 
         retrieved_chunks = retrieve_relevant_chunks(
@@ -241,6 +159,110 @@ class StructuredWorkflowService:
             evidence=evidence,
             prompt_context=prompt_context,
         )
+
+    def _execute_memo(self, context: WorkflowExecutionContext) -> MemoGenerationOutput:
+        if not context.evidence.citations:
+            return MemoGenerationOutput(
+                document_id=context.document_id,
+                status=WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE,
+                evidence=context.evidence,
+            )
+
+        draft = self._llm_provider.generate_structured_output(
+            system_prompt=self._build_system_prompt("memo generation"),
+            user_prompt=self._build_user_prompt(context=context),
+            response_model=MemoDraft,
+        )
+        self._validate_citation_ids(
+            citation_ids=self._memo_citation_ids(draft),
+            evidence=context.evidence,
+        )
+
+        return MemoGenerationOutput(
+            document_id=context.document_id,
+            status=WORKFLOW_STATUS_GENERATED,
+            memo=draft,
+            evidence=context.evidence,
+        )
+
+    def _execute_kpis(self, context: WorkflowExecutionContext) -> KPIExtractionOutput:
+        if not context.evidence.citations:
+            return KPIExtractionOutput(
+                document_id=context.document_id,
+                status=WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE,
+                evidence=context.evidence,
+            )
+
+        draft = self._llm_provider.generate_structured_output(
+            system_prompt=self._build_system_prompt("kpi extraction"),
+            user_prompt=self._build_user_prompt(context=context),
+            response_model=KPIDraft,
+        )
+        self._validate_citation_ids(
+            citation_ids=[kpi.citation for kpi in draft.kpis],
+            evidence=context.evidence,
+        )
+
+        return KPIExtractionOutput(
+            document_id=context.document_id,
+            status=WORKFLOW_STATUS_COMPLETED,
+            kpis=draft.kpis,
+            evidence=context.evidence,
+        )
+
+    def _execute_risks(self, context: WorkflowExecutionContext) -> RiskExtractionOutput:
+        if not context.evidence.citations:
+            return RiskExtractionOutput(
+                document_id=context.document_id,
+                status=WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE,
+                evidence=context.evidence,
+            )
+
+        draft = self._llm_provider.generate_structured_output(
+            system_prompt=self._build_system_prompt("risk extraction"),
+            user_prompt=self._build_user_prompt(context=context),
+            response_model=RiskDraft,
+        )
+        self._validate_citation_ids(
+            citation_ids=[risk.citation for risk in draft.risks],
+            evidence=context.evidence,
+        )
+
+        return RiskExtractionOutput(
+            document_id=context.document_id,
+            status=WORKFLOW_STATUS_COMPLETED,
+            risks=draft.risks,
+            evidence=context.evidence,
+        )
+
+    def _execute_timeline(self, context: WorkflowExecutionContext) -> TimelineBuildingOutput:
+        if not context.evidence.citations:
+            return TimelineBuildingOutput(
+                document_id=context.document_id,
+                status=WORKFLOW_STATUS_INSUFFICIENT_EVIDENCE,
+                evidence=context.evidence,
+            )
+
+        draft = self._llm_provider.generate_structured_output(
+            system_prompt=self._build_system_prompt("timeline building"),
+            user_prompt=self._build_user_prompt(context=context),
+            response_model=TimelineDraft,
+        )
+        self._validate_citation_ids(
+            citation_ids=[event.citation for event in draft.events],
+            evidence=context.evidence,
+        )
+
+        return TimelineBuildingOutput(
+            document_id=context.document_id,
+            status=WORKFLOW_STATUS_COMPLETED,
+            events=draft.events,
+            evidence=context.evidence,
+        )
+
+    # ------------------------------------------------------------------ #
+    # Internal helpers                                                      #
+    # ------------------------------------------------------------------ #
 
     def _build_evidence(
         self, *, document_id: int, chunks: list[RetrievedChunk]

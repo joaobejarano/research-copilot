@@ -161,3 +161,8 @@ export interface BuildTimelineResponseModel {
   events: TimelineEventModel[];
   evidence: WorkflowEvidenceModel;
 }
+
+export type WorkflowStreamEvent =
+  | { type: "status"; step: "retrieving" | "generating"; message: string }
+  | { type: "result"; payload: unknown }
+  | { type: "error"; message: string };
