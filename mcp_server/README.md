@@ -7,8 +7,18 @@ This package is a separate FastMCP server bootstrap, intentionally isolated from
 - `mcp_server/config.py`: MCP-specific environment and integration settings
 - `mcp_server/server.py`: FastMCP bootstrap + registration entry points
 - `mcp_server/main.py`: runtime entry point (`python -m mcp_server`)
-- `mcp_server/tools/`: placeholder tool registry (no tools yet)
+- `mcp_server/tools/`: tool registration and read-only document tools
 - `mcp_server/resources/`: placeholder resource registry (no resources yet)
+
+## Tools (Stage 8)
+
+- `search_documents`
+  - returns backend document metadata list
+  - supports optional metadata filtering (`company_name_contains`, `document_type`, `period`, `status`, `limit`)
+- `fetch_document_chunks`
+  - requires `document_id`
+  - returns chunk metadata and text
+  - does not return raw embeddings
 
 ## Run locally
 

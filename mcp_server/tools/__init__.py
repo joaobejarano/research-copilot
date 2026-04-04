@@ -1,11 +1,8 @@
 from mcp.server.fastmcp import FastMCP
 
 from mcp_server.config import MCPServerSettings
+from mcp_server.tools.documents import register_document_tools
 
 
 def register_tools(*, server: FastMCP, settings: MCPServerSettings) -> None:
-    """Register MCP tools (Stage 8 foundation).
-
-    Intentionally empty in Stage 8 bootstrap. Tool implementations will be added in later stages.
-    """
-    del server, settings
+    register_document_tools(server=server, settings=settings)

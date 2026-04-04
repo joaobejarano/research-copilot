@@ -4,7 +4,7 @@ from mcp_server.config import MCPServerSettings
 from mcp_server.server import create_mcp_server
 
 
-def test_create_mcp_server_bootstrap_has_no_tools_or_resources() -> None:
+def test_create_mcp_server_bootstrap_registers_document_tools_only() -> None:
     settings = MCPServerSettings(
         server_name="Research Copilot MCP Test",
         transport="stdio",
@@ -21,6 +21,7 @@ def test_create_mcp_server_bootstrap_has_no_tools_or_resources() -> None:
     assert server.settings.host == "127.0.0.1"
     assert server.settings.port == 8811
     assert server.settings.mount_path == "/"
-    assert asyncio.run(server.list_tools()) == []
+    tools = asyncio.run(server.list_tools())
+    assert {tool.name for tool in tools} == {"search_documents", "fetch_document_chunks"}
     assert asyncio.run(server.list_resources()) == []
     assert asyncio.run(server.list_resource_templates()) == []
