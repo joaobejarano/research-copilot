@@ -1,154 +1,176 @@
 # Research Copilot
 
-Research Copilot is in Stage 6.
+Research Copilot is in Stage 7.
 
-Stage 6 adds a backend reliability layer for grounded outputs:
+Stage 7 adds a practical local evaluation foundation plus lightweight human review capture.
 
-- citation verification for grounded Q&A
-- confidence scoring and explicit gate decisions
-- one constrained, document-scoped research agent
-- fail-safe output gating (`passed`, `needs_review`, `blocked`)
+## Stage 7: Evals and Human Review
 
-## How Stage 6 Reliability Works
+### How Stage 7 evals work
 
-Stage 6 reliability runs in two places:
+Stage 7 evals are local, explicit, and dataset-driven:
 
-1. Grounded Q&A verification
-- `POST /documents/{document_id}/verify/ask`
-- The system validates citation presence, document match, and excerpt grounding.
-- It then computes confidence signals and a gate decision.
+- eval cases are defined in JSON (`evals/datasets/stage7_seed_cases.json`)
+- document fixtures are seeded into a local DB for deterministic execution
+- the eval runner executes existing backend workflows through API endpoints
+- each case produces explicit metric scores and pass/fail outcome
+- JSON and Markdown reports are written for inspection and comparison
 
-2. Constrained research agent
-- `POST /documents/{document_id}/agent`
-- The agent selects from existing tools only:
-  - `ask`
-  - `memo`
-  - `extract_kpis`
-  - `extract_risks`
-  - `build_timeline`
-- The agent records a deterministic trace, computes confidence, decides gate status, and withholds final outputs unless the gate passes.
+Supported workflow types:
 
-## Status Meanings
+- `ask`
+- `memo`
+- `extract_kpis`
+- `extract_risks`
+- `timeline`
 
-Agent response status is explicit:
+### How to run the eval runner
 
-- `passed`: verification and confidence checks allow execution; outputs are returned.
-- `needs_review`: confidence is not high enough (or verification is inconclusive); outputs are withheld and reasons are returned.
-- `blocked`: verification failed or execution cannot proceed safely (for example, document not ready); outputs are withheld and reasons are returned.
+```bash
+python -m evals.runner --dataset evals/datasets/stage7_seed_cases.json --fail-on-fail
+```
+
+By default reports are written to `evals/results/`:
+
+- `stage7_eval_report_<timestamp>.json`
+- `stage7_eval_report_<timestamp>.md`
+
+### Metrics currently implemented
+
+Stage 7 starts with deterministic metrics:
+
+- `schema_adherence`
+- `abstention_correctness`
+- `citation_presence`
+- `citation_accuracy`
+
+Additional explicit checks included in results:
+
+- `expected_status_match`
+- `expected_fields_adherence`
+
+## Human Review (Lightweight)
+
+Stage 7 adds backend feedback capture and a minimal analyst dashboard panel.
+
+### How human review works
+
+- Analysts review existing workflow outputs (currently practical path centered on grounded Q&A output in dashboard flow).
+- Feedback is stored as structured records with:
+  - `workflow_type`
+  - `document_id`
+  - optional target linkage (`target_id` or `target_reference`)
+  - `feedback_value` (`positive` or `negative`)
+  - optional `reason` (required for negative)
+  - optional `reviewer_note`
+  - `created_at`
+- Recent feedback can be listed and filtered.
+
+### Feedback endpoints
+
+- `POST /feedback`
+- `GET /feedback`
+
+### How to submit feedback (curl)
+
+Positive feedback:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/feedback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow_type": "ask",
+    "document_id": 1,
+    "target_reference": "ask:answered:What happened to revenue in Q4?",
+    "feedback_value": "positive",
+    "reviewer_note": "Clear and grounded answer."
+  }'
+```
+
+Negative feedback (reason required):
+
+```bash
+curl -X POST "http://127.0.0.1:8000/feedback" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow_type": "ask",
+    "document_id": 1,
+    "target_reference": "ask:answered:What happened to revenue in Q4?",
+    "feedback_value": "negative",
+    "reason": "Answer missed key risk context.",
+    "reviewer_note": "Need stronger citation grounding."
+  }'
+```
+
+List feedback:
+
+```bash
+curl "http://127.0.0.1:8000/feedback?document_id=1&feedback_value=negative"
+```
+
+## Feedback as Future Eval Input
+
+Stage 7 includes a lightweight export path to turn stored feedback into follow-up eval candidate cases.
+
+Generate candidates (negative feedback by default):
+
+```bash
+python -m evals.feedback_export \
+  --database-url "${DATABASE_URL}" \
+  --feedback-value negative \
+  --limit 200 \
+  --output evals/results/feedback_followup_candidates.json
+```
+
+The generated file includes:
+
+- `summary` (scanned/generated/skipped)
+- `candidates` with `eval_case_candidate` templates
+- `skipped` rows (for workflows outside current Stage 7 eval runner scope)
 
 ## Required Environment Variables
 
-Create backend environment:
+Core backend/runtime:
 
-```bash
-cp .env.example .env
-```
+- `DATABASE_URL` (or `POSTGRES_*` values)
+- `STORAGE_DIR`
 
-Stage 6 reliability variables:
+Retrieval/workflow settings used by eval and normal runs:
 
-- `CONFIDENCE_PASS_THRESHOLD` (default: `0.75`)
-- `CONFIDENCE_REVIEW_THRESHOLD` (default: `0.50`)
-- `ENABLE_CONFIDENCE_GATING` (default: `true`)
-- `MAX_AGENT_TOOL_CALLS` (default: `20`)
-
-Also required for workflows/LLM:
-
-- `OPENAI_API_KEY`
-- `LLM_PROVIDER` (default: `openai`)
-- `LLM_MODEL` (example: `gpt-4.1-mini`)
+- `RETRIEVAL_TOP_K`
+- `RETRIEVAL_MIN_SIMILARITY`
 - `MAX_WORKFLOW_CITATIONS`
 - `MAX_WORKFLOW_ITEMS`
 
-Also required for ingestion/retrieval:
+If using hosted LLM provider in normal runs:
 
-- `DATABASE_URL` (or `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`)
-- `STORAGE_DIR`
-- `CHUNK_SIZE`
-- `CHUNK_OVERLAP`
-- `EMBEDDING_PROVIDER`
-- `EMBEDDING_MODEL`
-- `EMBEDDING_DIMENSION`
-- `RETRIEVAL_TOP_K`
-- `RETRIEVAL_MIN_SIMILARITY`
+- `LLM_PROVIDER`
+- `LLM_MODEL`
+- `OPENAI_API_KEY` (when provider is OpenAI)
 
-If you run the Stage 4 frontend dashboard:
+Frontend dashboard (for review panel):
 
 - `NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`
 
-## Run Backend
+## Run Backend and Frontend
 
-1. Install backend dependencies:
+Backend:
 
 ```bash
 cd backend
 python -m pip install -r requirements-dev.txt
-```
-
-2. Start local Postgres (if needed):
-
-```bash
-docker compose -f infra/docker-compose.yml up -d
-```
-
-3. Start backend:
-
-```bash
-cd backend
 uvicorn app.main:app --reload
 ```
 
-API docs: `http://127.0.0.1:8000/docs`
-
-## Use the Verification Endpoint
-
-Verify a grounded answer with reliability assessment:
+Frontend:
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/documents/{document_id}/verify/ask" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "What happened to revenue in Q4?",
-    "top_k": 5,
-    "min_similarity": 0.2
-  }'
+cd frontend
+npm install
+npm run dev
 ```
 
-The response includes:
-
-- `verification`
-- `confidence`
-- `gate_decision`
-- `issues`
-
-## Use the Agent Endpoint
-
-Run the constrained agent on one document:
-
-```bash
-curl -X POST "http://127.0.0.1:8000/documents/{document_id}/agent" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "instruction": "Extract KPIs and risks, then answer what changed in Q4.",
-    "top_k": 5,
-    "min_similarity": 0.2
-  }'
-```
-
-The response includes:
-
-- `instruction`
-- `status`
-- `selected_tools`
-- `trace`
-- `outputs`
-- `outputs_withheld`
-- `decision_reasons`
-- `confidence`
-- `gate_decision`
-
-Note: the document must exist. If it is not `ready`, agent execution is blocked.
-
-## How to Run Tests
+## How to run tests
 
 Run all backend tests:
 
@@ -156,8 +178,8 @@ Run all backend tests:
 pytest -q backend/tests
 ```
 
-Run reliability-focused tests:
+Run eval and feedback-focused tests:
 
 ```bash
-pytest -q backend/tests/test_reliability_*.py backend/tests/test_documents_agent.py backend/tests/test_documents_verify_ask.py
+pytest -q evals/tests backend/tests/test_feedback.py
 ```

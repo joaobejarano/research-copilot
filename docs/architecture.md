@@ -1,115 +1,112 @@
-# Stage 6 Architecture Additions
+# Stage 7 Architecture Additions
 
-This document describes only what Stage 6 adds to the backend.
+This document describes only what Stage 7 adds.
 
-## Scope Added in Stage 6
+## Scope Added in Stage 7
 
-- reliability schemas for verification, confidence, gating, and agent traces
-- reliability service with explicit threshold-based gate decisions
-- grounded citation verification for Q&A answers
-- constrained research agent orchestration over existing internal tools
-- document-scoped reliability endpoints and responses
+- local eval foundation for grounded research workflows
+- deterministic eval runner behavior and report outputs
+- explicit eval metrics for practical local iteration
+- backend human feedback persistence and API endpoints
+- minimal dashboard human review panel integration
+- feedback export path into future eval candidate cases
 
-Out of scope in Stage 6:
+Out of scope in Stage 7:
 
-- multi-agent orchestration
-- human review UI/workflow execution
-- frontend agent experience
-- MCP/tooling beyond existing internal workflows
+- active learning pipelines
+- advanced human moderation workflows
+- auth for review actions
+- Stage 8+ quality systems
 
-## Backend Components Added
+## Components Added in Stage 7
 
-### Reliability schemas (`backend/app/reliability/schemas.py`)
+### Evals foundation (`evals/`)
 
-Stage 6 introduces strict models for:
+- `evals/schemas.py`
+  - explicit schemas for datasets, fixtures, run results, and summaries
+- `evals/datasets/stage7_seed_cases.json`
+  - practical benchmark dataset with positive and negative cases
+- `evals/runner.py`
+  - executes existing workflows via local ASGI requests
+  - seeds fixture documents/chunks for deterministic execution
+  - computes deterministic metrics per case
+  - writes JSON and Markdown reports
 
-- verification checks and outcomes (`VerificationCheckResult`, `VerificationOutcome`)
-- confidence signals and result (`ConfidenceSignal`, `ConfidenceResult`)
-- gate thresholds and decisions (`GateThresholds`, `GateDecision`)
-- agent execution trace (`AgentToolCallTrace`, `AgentExecutionTrace`)
-- consolidated assessment (`ReliabilityAssessment`)
+### Evals metrics
 
-### Reliability service (`backend/app/reliability/service.py`)
+Stage 7 metrics are explicit and deterministic:
 
-`ReliabilityService` provides explicit, deterministic mechanics:
+- `schema_adherence`
+- `abstention_correctness`
+- `citation_presence`
+- `citation_accuracy`
 
-- summarize verification checks into `passed`, `inconclusive`, or `failed`
-- compute confidence score/band from weighted signals and verification score
-- decide gate result (`pass`, `review`, `block`) using configured thresholds
-- build and finalize agent traces with per-tool call status
+Additional explicit checks included in results:
 
-### Grounded evaluator (`backend/app/reliability/grounded.py`)
+- `expected_status_match`
+- `expected_fields_adherence`
 
-`GroundedAskReliabilityEvaluator` evaluates grounded Q&A output by checking:
+### Backend feedback capture
 
-- citation exists in stored chunks
-- citation belongs to the requested document
-- citation excerpt is present in referenced chunk text
-- answer numeric claims are supported by cited chunks
+- DB model: `backend/app/db/models/feedback.py`
+- routes: `backend/app/api/routes/feedback.py`
+- endpoints:
+  - `POST /feedback`
+  - `GET /feedback`
 
-It returns:
+Captured fields:
 
-- verification result
-- confidence result
-- gate decision
-- issues list
+- `workflow_type`
+- `document_id`
+- optional `target_id`
+- optional `target_reference`
+- `feedback_value` (`positive`/`negative`)
+- optional `reason` (required for negative)
+- optional `reviewer_note`
+- `created_at`
 
-### Constrained agent (`backend/app/workflows/agent.py`)
+### Minimal review UX
 
-`ConstrainedResearchAgent` is document-scoped and deterministic:
+- dashboard page includes a practical review panel:
+  - thumbs up / thumbs down actions
+  - reason required for negative feedback
+  - optional reviewer note
+  - recent feedback listing for selected document
 
-- accepts one free-form instruction
-- selects only from allowed tools (`ask`, `memo`, `extract_kpis`, `extract_risks`, `build_timeline`)
-- executes selected tools in deterministic order
-- records full execution trace
-- applies confidence gating before returning outputs
+### Feedback -> eval follow-up export
 
-## Stage 6 API Additions
+- `evals/feedback_export.py`
+  - reads stored feedback from the local database
+  - filters rows (negative by default)
+  - transforms supported workflows into eval case candidate templates
+  - flags unsupported workflow rows in `skipped`
+  - writes JSON export for manual curation into future datasets
 
-### `POST /documents/{document_id}/verify/ask`
+## Stage 7 Runtime Flow
 
-- runs grounded Q&A plus reliability evaluation
-- returns verification, confidence, gate decision, and issues
+### Eval run flow
 
-### `POST /documents/{document_id}/agent`
+1. Load dataset and validate schema/references.
+2. Seed local fixtures into DB.
+3. Execute each case against workflow endpoint.
+4. Score deterministic metrics.
+5. Produce pass/fail summary.
+6. Write JSON/Markdown reports.
 
-- runs constrained agent orchestration for one document
-- returns:
-  - selected tools
-  - execution trace
-  - outputs (withheld unless gate passes)
-  - confidence
-  - gate decision
-  - explicit status (`passed`, `needs_review`, `blocked`)
+### Human review flow
 
-## Stage 6 Runtime Behavior
+1. Analyst reviews workflow output.
+2. Analyst submits positive/negative feedback.
+3. Backend validates payload (negative requires reason).
+4. Feedback record is persisted and can be listed.
+5. Feedback export script produces follow-up eval candidates for future runs.
 
-### Verification flow
+## Stage 7 Test Coverage Added
 
-1. Run grounded Q&A for one `document_id`.
-2. Verify citations and grounded excerpts.
-3. Compute confidence signals.
-4. Apply explicit gate decision.
-5. Return verification/confidence/gate details.
-
-### Agent flow
-
-1. Select tools deterministically from instruction.
-2. Execute selected tools within one document scope.
-3. Record per-tool execution trace.
-4. Build verification and confidence results.
-5. Apply gate decision:
-- `passed`: return outputs
-- `needs_review`: withhold outputs and return reasons
-- `blocked`: withhold outputs and return reasons
-
-## Test Coverage Added in Stage 6
-
-- reliability schema and service behavior tests
-- grounded evaluator tests for citation checks and numeric claim support
-- endpoint tests for `/verify/ask`
-- constrained agent endpoint tests for:
-  - passed outcome
-  - needs_review outcome
-  - blocked outcome
-  - deterministic trace behavior
+- eval dataset loading and validation tests
+- eval runner behavior tests
+- report generation tests (JSON and Markdown)
+- feedback creation tests
+- negative feedback reason handling tests
+- feedback listing/filtering tests
+- feedback export transformation tests
