@@ -1,112 +1,81 @@
-# Stage 7 Architecture Additions
+# Stage 8 Architecture Additions
 
-This document describes only what Stage 7 adds.
+This document describes only what Stage 8 adds.
 
-## Scope Added in Stage 7
+## Scope Added in Stage 8
 
-- local eval foundation for grounded research workflows
-- deterministic eval runner behavior and report outputs
-- explicit eval metrics for practical local iteration
-- backend human feedback persistence and API endpoints
-- minimal dashboard human review panel integration
-- feedback export path into future eval candidate cases
+- separate MCP server process in `mcp_server/`
+- shared MCP configuration for server runtime and backend integration
+- Stage 8 MCP tools for document discovery, chunk inspection, and document-scoped workflow actions
+- structured MCP error payloads for predictable client-side handling
 
-Out of scope in Stage 7:
+Out of scope in Stage 8:
 
-- active learning pipelines
-- advanced human moderation workflows
-- auth for review actions
-- Stage 8+ quality systems
+- multi-step agent orchestration through MCP
+- external MCP deployment infrastructure
+- Stage 9+ MCP capability expansion
 
-## Components Added in Stage 7
+## Components Added in Stage 8
 
-### Evals foundation (`evals/`)
+### MCP server bootstrap (`mcp_server/`)
 
-- `evals/schemas.py`
-  - explicit schemas for datasets, fixtures, run results, and summaries
-- `evals/datasets/stage7_seed_cases.json`
-  - practical benchmark dataset with positive and negative cases
-- `evals/runner.py`
-  - executes existing workflows via local ASGI requests
-  - seeds fixture documents/chunks for deterministic execution
-  - computes deterministic metrics per case
-  - writes JSON and Markdown reports
+- `mcp_server/config.py`
+  - loads MCP-specific env vars
+  - validates transport and port
+  - resolves backend base URL and optional DB linkage
+- `mcp_server/server.py`
+  - creates `FastMCP` instance
+  - registers tools/resources
+- `mcp_server/main.py`
+  - local entrypoint (`python -m mcp_server`)
 
-### Evals metrics
+### MCP tools
 
-Stage 7 metrics are explicit and deterministic:
+- `mcp_server/tools/documents.py`
+  - `search_documents` (read-only metadata listing/filtering)
+  - `fetch_document_chunks` (read-only chunk metadata/text)
+- `mcp_server/tools/workflows.py`
+  - `ask_document`
+  - `generate_memo`
+  - `extract_risks`
+  - all document-scoped, routed through existing backend workflows
+- `mcp_server/tools/errors.py`
+  - structured MCP error model with:
+    - `code`
+    - `message`
+    - `retryable`
+    - `details`
 
-- `schema_adherence`
-- `abstention_correctness`
-- `citation_presence`
-- `citation_accuracy`
+### MCP resources
 
-Additional explicit checks included in results:
+- `mcp_server/resources/`
+  - registration placeholder kept explicit
+  - no Stage 8 resource payloads added yet
 
-- `expected_status_match`
-- `expected_fields_adherence`
+## Stage 8 Runtime Flow
 
-### Backend feedback capture
+1. MCP server starts with validated MCP settings.
+2. Client invokes an MCP tool.
+3. Tool validates input and calls backend endpoint through `MCP_BACKEND_BASE_URL`.
+4. MCP returns structured output aligned with backend contracts.
+5. If failure occurs, MCP returns structured error payload with explicit error code.
 
-- DB model: `backend/app/db/models/feedback.py`
-- routes: `backend/app/api/routes/feedback.py`
-- endpoints:
-  - `POST /feedback`
-  - `GET /feedback`
+## Stage 8 Design Constraints Enforced
 
-Captured fields:
+- MCP stays separate from FastAPI backend process.
+- Tools reuse existing backend behavior instead of duplicating business logic.
+- Initial toolset is document-scoped only.
+- Read-only inspection tools are preserved alongside first action tools.
+- `insufficient_evidence` behavior from grounded workflows is preserved in MCP outputs.
 
-- `workflow_type`
-- `document_id`
-- optional `target_id`
-- optional `target_reference`
-- `feedback_value` (`positive`/`negative`)
-- optional `reason` (required for negative)
-- optional `reviewer_note`
-- `created_at`
+## Stage 8 Test Coverage Added
 
-### Minimal review UX
-
-- dashboard page includes a practical review panel:
-  - thumbs up / thumbs down actions
-  - reason required for negative feedback
-  - optional reviewer note
-  - recent feedback listing for selected document
-
-### Feedback -> eval follow-up export
-
-- `evals/feedback_export.py`
-  - reads stored feedback from the local database
-  - filters rows (negative by default)
-  - transforms supported workflows into eval case candidate templates
-  - flags unsupported workflow rows in `skipped`
-  - writes JSON export for manual curation into future datasets
-
-## Stage 7 Runtime Flow
-
-### Eval run flow
-
-1. Load dataset and validate schema/references.
-2. Seed local fixtures into DB.
-3. Execute each case against workflow endpoint.
-4. Score deterministic metrics.
-5. Produce pass/fail summary.
-6. Write JSON/Markdown reports.
-
-### Human review flow
-
-1. Analyst reviews workflow output.
-2. Analyst submits positive/negative feedback.
-3. Backend validates payload (negative requires reason).
-4. Feedback record is persisted and can be listed.
-5. Feedback export script produces follow-up eval candidates for future runs.
-
-## Stage 7 Test Coverage Added
-
-- eval dataset loading and validation tests
-- eval runner behavior tests
-- report generation tests (JSON and Markdown)
-- feedback creation tests
-- negative feedback reason handling tests
-- feedback listing/filtering tests
-- feedback export transformation tests
+- MCP server startup and tool registration tests
+- schema/description inspection tests for exposed tools
+- deterministic tool execution tests for:
+  - `search_documents`
+  - `fetch_document_chunks`
+  - `ask_document`
+  - `generate_memo`
+  - `extract_risks`
+- structured error-path tests for invalid input and backend failure mapping

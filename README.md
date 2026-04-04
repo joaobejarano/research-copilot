@@ -1,160 +1,39 @@
 # Research Copilot
 
-Research Copilot is in Stage 7.
+Research Copilot is in Stage 8.
 
-Stage 7 adds a practical local evaluation foundation plus lightweight human review capture.
+Stage 8 adds a separate MCP server that exposes document-scoped tools backed by existing FastAPI workflows.
 
-## Stage 7: Evals and Human Review
+## Stage 8: MCP Server
 
-### How Stage 7 evals work
+### How Stage 8 MCP works
 
-Stage 7 evals are local, explicit, and dataset-driven:
+- MCP runs as a separate process in `mcp_server/`.
+- The MCP server calls existing backend endpoints through `MCP_BACKEND_BASE_URL`.
+- Tool outputs are structured and aligned to backend response schemas.
+- Action tools preserve grounded behavior, including `insufficient_evidence`.
+- Errors are returned as structured payloads (`code`, `message`, `retryable`, `details`) for client inspection.
 
-- eval cases are defined in JSON (`evals/datasets/stage7_seed_cases.json`)
-- document fixtures are seeded into a local DB for deterministic execution
-- the eval runner executes existing backend workflows through API endpoints
-- each case produces explicit metric scores and pass/fail outcome
-- JSON and Markdown reports are written for inspection and comparison
+### Required environment variables
 
-Supported workflow types:
+Minimum MCP settings:
 
-- `ask`
-- `memo`
-- `extract_kpis`
-- `extract_risks`
-- `timeline`
+- `MCP_SERVER_NAME` (default: `Research Copilot MCP`)
+- `MCP_TRANSPORT` (`stdio`, `sse`, or `streamable-http`; default: `stdio`)
+- `MCP_BACKEND_BASE_URL` (default: `http://127.0.0.1:8000`)
 
-### How to run the eval runner
+Common local overrides:
 
-```bash
-python -m evals.runner --dataset evals/datasets/stage7_seed_cases.json --fail-on-fail
-```
+- `MCP_SERVER_HOST` (default: `127.0.0.1`)
+- `MCP_SERVER_PORT` (default: `8811`)
+- `MCP_MOUNT_PATH` (default: `/`)
+- `MCP_DATABASE_URL` (optional; falls back to `DATABASE_URL`)
 
-By default reports are written to `evals/results/`:
+Backend still requires its own runtime env (for example `DATABASE_URL`, `STORAGE_DIR`, and workflow/provider settings).
 
-- `stage7_eval_report_<timestamp>.json`
-- `stage7_eval_report_<timestamp>.md`
+### How to start the MCP server locally
 
-### Metrics currently implemented
-
-Stage 7 starts with deterministic metrics:
-
-- `schema_adherence`
-- `abstention_correctness`
-- `citation_presence`
-- `citation_accuracy`
-
-Additional explicit checks included in results:
-
-- `expected_status_match`
-- `expected_fields_adherence`
-
-## Human Review (Lightweight)
-
-Stage 7 adds backend feedback capture and a minimal analyst dashboard panel.
-
-### How human review works
-
-- Analysts review existing workflow outputs (currently practical path centered on grounded Q&A output in dashboard flow).
-- Feedback is stored as structured records with:
-  - `workflow_type`
-  - `document_id`
-  - optional target linkage (`target_id` or `target_reference`)
-  - `feedback_value` (`positive` or `negative`)
-  - optional `reason` (required for negative)
-  - optional `reviewer_note`
-  - `created_at`
-- Recent feedback can be listed and filtered.
-
-### Feedback endpoints
-
-- `POST /feedback`
-- `GET /feedback`
-
-### How to submit feedback (curl)
-
-Positive feedback:
-
-```bash
-curl -X POST "http://127.0.0.1:8000/feedback" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workflow_type": "ask",
-    "document_id": 1,
-    "target_reference": "ask:answered:What happened to revenue in Q4?",
-    "feedback_value": "positive",
-    "reviewer_note": "Clear and grounded answer."
-  }'
-```
-
-Negative feedback (reason required):
-
-```bash
-curl -X POST "http://127.0.0.1:8000/feedback" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "workflow_type": "ask",
-    "document_id": 1,
-    "target_reference": "ask:answered:What happened to revenue in Q4?",
-    "feedback_value": "negative",
-    "reason": "Answer missed key risk context.",
-    "reviewer_note": "Need stronger citation grounding."
-  }'
-```
-
-List feedback:
-
-```bash
-curl "http://127.0.0.1:8000/feedback?document_id=1&feedback_value=negative"
-```
-
-## Feedback as Future Eval Input
-
-Stage 7 includes a lightweight export path to turn stored feedback into follow-up eval candidate cases.
-
-Generate candidates (negative feedback by default):
-
-```bash
-python -m evals.feedback_export \
-  --database-url "${DATABASE_URL}" \
-  --feedback-value negative \
-  --limit 200 \
-  --output evals/results/feedback_followup_candidates.json
-```
-
-The generated file includes:
-
-- `summary` (scanned/generated/skipped)
-- `candidates` with `eval_case_candidate` templates
-- `skipped` rows (for workflows outside current Stage 7 eval runner scope)
-
-## Required Environment Variables
-
-Core backend/runtime:
-
-- `DATABASE_URL` (or `POSTGRES_*` values)
-- `STORAGE_DIR`
-
-Retrieval/workflow settings used by eval and normal runs:
-
-- `RETRIEVAL_TOP_K`
-- `RETRIEVAL_MIN_SIMILARITY`
-- `MAX_WORKFLOW_CITATIONS`
-- `MAX_WORKFLOW_ITEMS`
-
-If using hosted LLM provider in normal runs:
-
-- `LLM_PROVIDER`
-- `LLM_MODEL`
-- `OPENAI_API_KEY` (when provider is OpenAI)
-
-Frontend dashboard (for review panel):
-
-- `NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`
-
-## Run Backend and Frontend
-
-Backend:
+Start backend first:
 
 ```bash
 cd backend
@@ -162,24 +41,64 @@ python -m pip install -r requirements-dev.txt
 uvicorn app.main:app --reload
 ```
 
-Frontend:
+Start MCP server from repo root:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+python -m mcp_server
 ```
 
-## How to run tests
+### Exposed MCP tools
 
-Run all backend tests:
+Read-only tools:
+
+- `search_documents`
+- `fetch_document_chunks`
+
+Action tools (document-scoped):
+
+- `ask_document`
+- `generate_memo`
+- `extract_risks`
+
+### How to validate MCP tools locally
+
+Use in-process tool calls:
+
+```bash
+python - <<'PY'
+import asyncio
+from mcp_server.config import load_mcp_server_settings
+from mcp_server.server import create_mcp_server
+
+async def main():
+    server = create_mcp_server(load_mcp_server_settings())
+
+    print(await server.call_tool("search_documents", {"limit": 5}))
+    print(await server.call_tool("fetch_document_chunks", {"document_id": 1}))
+    print(await server.call_tool("ask_document", {"document_id": 1, "question": "What changed in revenue in Q4?"}))
+    print(await server.call_tool("generate_memo", {"document_id": 1}))
+    print(await server.call_tool("extract_risks", {"document_id": 1}))
+
+asyncio.run(main())
+PY
+```
+
+Expected behavior:
+
+- ready, grounded answers return normal structured payloads
+- low evidence paths return `insufficient_evidence` status in action tool outputs
+- invalid inputs/backend failures return structured MCP tool errors
+
+### How to run tests
+
+MCP server tests:
+
+```bash
+.venv/bin/pytest -q mcp_server/tests
+```
+
+Optional broader backend tests:
 
 ```bash
 pytest -q backend/tests
-```
-
-Run eval and feedback-focused tests:
-
-```bash
-pytest -q evals/tests backend/tests/test_feedback.py
 ```
